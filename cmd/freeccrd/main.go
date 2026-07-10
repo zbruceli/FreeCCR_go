@@ -19,6 +19,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strconv"
 	"sync"
 	"time"
@@ -53,6 +54,7 @@ func main() {
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", s.handleIndex)
+	mux.HandleFunc("/api/browse", s.handleBrowse)
 	mux.HandleFunc("/api/load", s.handleLoad)
 	mux.HandleFunc("/api/thumb", s.handleThumb)
 	mux.HandleFunc("/api/preview", s.handlePreview)
@@ -149,6 +151,67 @@ func (s *server) handleIndex(w http.ResponseWriter, r *http.Request) {
 	w.Write(b)
 }
 
+// handleBrowse lists sub-directories of a path so the SPA can offer a
+// filesystem folder picker (the server runs on the user's own machine). It also
+// reports how many supported images each folder directly contains, so rolls are
+// easy to spot. Empty/invalid path falls back to the home directory.
+func (s *server) handleBrowse(w http.ResponseWriter, r *http.Request) {
+	home, _ := os.UserHomeDir()
+	p := r.URL.Query().Get("path")
+	if p == "" {
+		p = home
+	}
+	p = filepath.Clean(p)
+	entries, err := os.ReadDir(p)
+	if err != nil {
+		// Fall back to home on a bad path rather than erroring the UI.
+		p = home
+		entries, err = os.ReadDir(p)
+		if err != nil {
+			http.Error(w, err.Error(), 400)
+			return
+		}
+	}
+	type dirent struct {
+		Name   string `json:"name"`
+		Images int    `json:"images"`
+	}
+	var dirs []dirent
+	for _, e := range entries {
+		if !e.IsDir() || len(e.Name()) == 0 || e.Name()[0] == '.' {
+			continue
+		}
+		dirs = append(dirs, dirent{Name: e.Name(), Images: countImages(filepath.Join(p, e.Name()))})
+	}
+	sort.Slice(dirs, func(i, j int) bool { return dirs[i].Name < dirs[j].Name })
+	writeJSON(w, map[string]any{
+		"path":   p,
+		"parent": filepath.Dir(p),
+		"home":   home,
+		"images": countImages(p), // images directly in the current folder
+		"dirs":   dirs,
+	})
+}
+
+// countImages returns the number of supported image files directly in dir
+// (bounded; used only for the picker hint).
+func countImages(dir string) int {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return 0
+	}
+	n := 0
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		if decode.IsRAW(e.Name()) || decode.IsStandard(e.Name()) {
+			n++
+		}
+	}
+	return n
+}
+
 func (s *server) handleLoad(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Dir string `json:"dir"`
@@ -202,6 +265,14 @@ func (s *server) handlePreview(w http.ResponseWriter, r *http.Request) {
 	f := s.sess.Frame(req.ID)
 	if f == nil || f.Preview == nil {
 		http.Error(w, "no such frame", 404)
+		return
+	}
+	// Before any film-base is sampled, a B/W-point conversion has no anchor and
+	// would render black. Show the raw scan instead so the user can see it and
+	// sample the clear base / dense point. (Reference/auto mode always has the
+	// whole-frame default, so it converts fine.)
+	if req.Mode != "reference" && !req.HasWhite && req.Black == ([3]float64{0, 0, 0}) {
+		writeJPEG(w, f.Preview, 88)
 		return
 	}
 	sp := req.toSpec()

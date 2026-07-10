@@ -5,3 +5,5 @@
 *.png
 !src/icons/*
 scratch_*
+/freeccr
+/freeccrd

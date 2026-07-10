@@ -38,6 +38,11 @@
            position:relative; overflow:hidden; }
   #preview { max-width:100%; max-height:100%; object-fit:contain; }
   #stage.sampling { cursor:crosshair; }
+  #empty { text-align:center; color:var(--dim); user-select:none; padding:24px; }
+  #empty .ei { font-size:58px; opacity:.75; margin-bottom:12px; filter:grayscale(.15); }
+  #empty .et { font-size:16px; color:var(--txt); margin-bottom:8px; letter-spacing:.3px; }
+  #empty .es { font-size:12.5px; max-width:330px; line-height:1.6; margin:0 auto; }
+  #empty b { color:var(--accent); font-weight:600; }
   #hint { position:absolute; top:10px; left:50%; transform:translateX(-50%);
           background:rgba(0,0,0,.7); padding:5px 12px; border-radius:14px; color:var(--warn);
           font-size:12px; display:none; }
@@ -58,19 +63,42 @@
   .seg button:last-child { border-right:0; }
   label.ck { display:flex; align-items:center; gap:6px; color:var(--dim); cursor:pointer; }
   .muted { color:var(--dim); font-size:11px; }
+  /* folder picker */
+  #browseModal { display:none; position:fixed; inset:0; background:rgba(0,0,0,.55);
+                 z-index:100; align-items:center; justify-content:center; }
+  #browseBox { background:var(--panel); border:1px solid var(--line); border-radius:8px;
+               width:520px; max-width:92vw; max-height:74vh; display:flex; flex-direction:column; }
+  #browseBox .hd, #browseBox .ft { padding:10px 14px; display:flex; gap:8px; align-items:center; }
+  #browseBox .hd { border-bottom:1px solid var(--line); }
+  #browseBox .ft { border-top:1px solid var(--line); }
+  #browseBar { padding:8px 14px; display:flex; gap:8px; align-items:center; }
+  #browsePath { flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+                direction:rtl; text-align:left; }
+  #browseList { flex:1; overflow-y:auto; padding:4px 8px; min-height:120px; }
+  .browse-item { display:flex; align-items:center; gap:8px; padding:6px 8px; border-radius:5px;
+                 cursor:pointer; }
+  .browse-item:hover { background:var(--panel2); }
+  .browse-item .cnt { margin-left:auto; font-size:11px; color:var(--accent); }
 </style>
 </head>
 <body>
 <header>
   <h1>FreeCCR·go</h1>
   <input type="text" id="dir" placeholder="/path/to/roll (folder of scans)">
+  <button onclick="openBrowse()">📁 Browse…</button>
   <button class="primary" onclick="loadRoll()">Load Roll</button>
   <span id="status">no roll loaded</span>
 </header>
 <main>
   <div id="thumbs"></div>
   <div id="stage">
-    <img id="preview" alt="preview">
+    <img id="preview" alt="" style="display:none">
+    <div id="empty">
+      <div class="ei">🎞️</div>
+      <div class="et">No roll loaded</div>
+      <div class="es">Pick a folder of scans — click <b>📁&nbsp;Browse…</b> or type a path,
+        then <b>Load&nbsp;Roll</b>. Then click a frame and sample its film base.</div>
+    </div>
     <div id="hint"></div>
   </div>
   <div id="panel">
@@ -160,6 +188,22 @@
     </div>
   </div>
 </main>
+
+<div id="browseModal" onclick="if(event.target===this)closeBrowse()">
+  <div id="browseBox">
+    <div class="hd"><b>Choose roll folder</b><button style="margin-left:auto" onclick="closeBrowse()">✕</button></div>
+    <div id="browseBar">
+      <button onclick="browseUp()">⬆ Up</button>
+      <button onclick="browseGo(browseHome)">🏠 Home</button>
+      <span id="browsePath" class="muted"></span>
+    </div>
+    <div id="browseList"></div>
+    <div class="ft">
+      <span class="muted" id="browseHint" style="flex:1"></span>
+      <button class="primary" onclick="pickBrowse()">Use this folder</button>
+    </div>
+  </div>
+</div>
 
 <script>
 const SLIDERS = [
@@ -287,6 +331,39 @@ window.addEventListener("mouseup",()=>{ dragPt=-1; });
 cvCanvas.addEventListener("dblclick",e=>{ const[cx,cy]=curveMouse(e); const i=nearPt(cx,cy); const pts=curvePts();
   if(i>0&&i<pts.length-1){ pts.splice(i,1); drawCurve(); refresh(); } });
 
+// --- folder picker ---
+let browseCur="", browseParent="", browseHome="";
+function openBrowse(){
+  document.getElementById("browseModal").style.display="flex";
+  browseGo(document.getElementById("dir").value.trim());
+}
+function closeBrowse(){ document.getElementById("browseModal").style.display="none"; }
+async function browseGo(path){
+  const r=await fetch("/api/browse?path="+encodeURIComponent(path||""));
+  if(!r.ok) return;
+  const d=await r.json();
+  browseCur=d.path; browseParent=d.parent; browseHome=d.home||browseHome;
+  document.getElementById("browsePath").textContent=d.path;
+  document.getElementById("browseHint").textContent =
+    (d.images? d.images+" image"+(d.images>1?"s":"")+" here" : "no images directly here");
+  const list=document.getElementById("browseList"); list.innerHTML="";
+  if(!d.dirs.length){ list.innerHTML='<div class="muted" style="padding:8px">no sub-folders</div>'; }
+  d.dirs.forEach(dir=>{
+    const el=document.createElement("div"); el.className="browse-item";
+    el.innerHTML=`<span>📁</span><span>${dir.name}</span>`+
+      (dir.images?`<span class="cnt">${dir.images} img</span>`:"");
+    el.onclick=()=>browseGo(joinPath(d.path,dir.name));
+    list.appendChild(el);
+  });
+}
+function joinPath(base,name){ return base.replace(/\/+$/,"")+"/"+name; }
+function browseUp(){ if(browseParent && browseParent!==browseCur) browseGo(browseParent); }
+function pickBrowse(){
+  document.getElementById("dir").value=browseCur;
+  closeBrowse();
+  loadRoll();
+}
+
 async function loadRoll(){
   const dir=document.getElementById("dir").value.trim();
   if(!dir) return;
@@ -412,6 +489,8 @@ async function doPreview(){
   const blob=await r.blob();
   if(previewURL) URL.revokeObjectURL(previewURL);
   previewURL=URL.createObjectURL(blob); preview.src=previewURL;
+  preview.style.display="";                       // reveal image, hide empty state
+  document.getElementById("empty").style.display="none";
 }
 
 function syncAll(){
