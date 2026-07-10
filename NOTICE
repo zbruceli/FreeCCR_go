@@ -1,0 +1,32 @@
+FreeCCR-go
+Copyright (C) 2026 Bruce Li (github.com/zbruceli)
+
+This program is a Go port of FreeCCR, a physics-based color-negative film-scan
+converter:
+
+    FreeCCR — https://github.com/toonoumi/FreeCCR
+    Copyright (C) Halo Imagery and the FreeCCR authors
+    Licensed under the GNU Affero General Public License v3.0 (AGPL-3.0)
+
+FreeCCR-go is a derivative work: its conversion and color-adjustment pipeline
+(negative inversion, working-space windowing, the adjustment chain, reference/
+auto normalization, constants, and staging) is a language port of FreeCCR's
+src/core/ccr_processor.py. Fidelity to the original is verified numerically
+(see ref/AB.md).
+
+Because the original is licensed under the AGPL-3.0, this port is likewise
+licensed under the GNU Affero General Public License, version 3 or (at your
+option) any later version. See the LICENSE file for the full text.
+
+As required by the AGPL's Section 13 (network use): if you run a modified
+version of this software as a network service — including the bundled web UI
+(cmd/freeccrd) — you must offer its users access to the corresponding source
+code.
+
+No warranty; see sections 15–17 of the LICENSE.
+
+Third-party components:
+  - RAW decoding uses libraw (LGPL-2.1 / CDDL-1.0), linked at build time via
+    cgo when built with `-tags libraw`. libraw is not distributed with this
+    source; install it separately (e.g. `brew install libraw`).
+  - Go standard library and golang.org/x/image (BSD-3-Clause).

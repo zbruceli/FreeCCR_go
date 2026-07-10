@@ -1,0 +1,306 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FreeCCR-go</title>
+<style>
+  :root {
+    --bg: #16181d; --panel: #1e2128; --panel2: #262a33; --line: #33384a;
+    --txt: #e6e8ee; --dim: #9aa0b0; --accent: #56b6c2; --accent2:#c678dd;
+    --warn:#e5c07b;
+  }
+  * { box-sizing: border-box; }
+  body { margin:0; font:13px/1.4 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+         background:var(--bg); color:var(--txt); height:100vh; overflow:hidden; }
+  header { display:flex; gap:8px; align-items:center; padding:8px 12px;
+           background:var(--panel); border-bottom:1px solid var(--line); }
+  header h1 { font-size:14px; margin:0 12px 0 0; letter-spacing:.5px; color:var(--accent); }
+  input[type=text], input[type=number] { background:var(--panel2); border:1px solid var(--line);
+           color:var(--txt); border-radius:5px; padding:5px 8px; }
+  #dir { flex:1; min-width:200px; }
+  button { background:var(--panel2); color:var(--txt); border:1px solid var(--line);
+           border-radius:5px; padding:5px 11px; cursor:pointer; }
+  button:hover { border-color:var(--accent); }
+  button.primary { background:var(--accent); color:#0c1013; border-color:var(--accent); font-weight:600; }
+  button.active { background:var(--accent2); color:#0c1013; border-color:var(--accent2); }
+  #status { color:var(--dim); margin-left:auto; }
+  main { display:grid; grid-template-columns: 150px 1fr 300px; height:calc(100vh - 49px); }
+  #thumbs { overflow-y:auto; background:var(--panel); border-right:1px solid var(--line); padding:6px; }
+  .thumb { position:relative; margin-bottom:6px; border:2px solid transparent; border-radius:5px;
+           cursor:pointer; overflow:hidden; }
+  .thumb.sel { border-color:var(--accent); }
+  .thumb img { display:block; width:100%; }
+  .thumb .nm { position:absolute; bottom:0; left:0; right:0; font-size:10px; padding:2px 4px;
+               background:rgba(0,0,0,.6); color:var(--dim); white-space:nowrap; overflow:hidden;
+               text-overflow:ellipsis; }
+  #stage { display:flex; align-items:center; justify-content:center; background:#0d0f13;
+           position:relative; overflow:hidden; }
+  #preview { max-width:100%; max-height:100%; object-fit:contain; }
+  #stage.sampling { cursor:crosshair; }
+  #hint { position:absolute; top:10px; left:50%; transform:translateX(-50%);
+          background:rgba(0,0,0,.7); padding:5px 12px; border-radius:14px; color:var(--warn);
+          font-size:12px; display:none; }
+  #panel { overflow-y:auto; background:var(--panel); border-left:1px solid var(--line); padding:12px; }
+  .sec { margin-bottom:16px; }
+  .sec h3 { font-size:11px; text-transform:uppercase; letter-spacing:.8px; color:var(--dim);
+            margin:0 0 8px; border-bottom:1px solid var(--line); padding-bottom:4px; }
+  .row { display:flex; align-items:center; gap:8px; margin-bottom:7px; }
+  .row label { width:78px; color:var(--dim); font-size:12px; }
+  .row input[type=range] { flex:1; accent-color:var(--accent); }
+  .row .val { width:38px; text-align:right; font-variant-numeric:tabular-nums; color:var(--txt); }
+  .swatch { display:inline-block; width:16px; height:16px; border-radius:3px; border:1px solid var(--line);
+            vertical-align:middle; }
+  .chip { font-size:11px; color:var(--dim); }
+  .btns { display:flex; gap:6px; flex-wrap:wrap; }
+  .seg { display:flex; border:1px solid var(--line); border-radius:5px; overflow:hidden; }
+  .seg button { border:0; border-radius:0; border-right:1px solid var(--line); }
+  .seg button:last-child { border-right:0; }
+  label.ck { display:flex; align-items:center; gap:6px; color:var(--dim); cursor:pointer; }
+  .muted { color:var(--dim); font-size:11px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>FreeCCR·go</h1>
+  <input type="text" id="dir" placeholder="/path/to/roll (folder of scans)">
+  <button class="primary" onclick="loadRoll()">Load Roll</button>
+  <span id="status">no roll loaded</span>
+</header>
+<main>
+  <div id="thumbs"></div>
+  <div id="stage">
+    <img id="preview" alt="preview">
+    <div id="hint"></div>
+  </div>
+  <div id="panel">
+    <div class="sec">
+      <h3>Conversion</h3>
+      <div class="seg" style="margin-bottom:8px">
+        <button id="m-bw" class="active" onclick="setMode('bwpoint')">B/W Point</button>
+        <button id="m-ref" onclick="setMode('reference')">Auto / Reference</button>
+      </div>
+      <div id="bwctl">
+        <div class="row">
+          <button id="s-black" onclick="startSample('black')">Set Black Pt</button>
+          <span class="swatch" id="sw-black"></span><span class="chip" id="v-black">film base —</span>
+        </div>
+        <div class="row">
+          <button id="s-white" onclick="startSample('white')">Set White Pt</button>
+          <span class="swatch" id="sw-white"></span><span class="chip" id="v-white">dense — (optional)</span>
+        </div>
+        <label class="ck"><input type="checkbox" id="density" onchange="onDensity()"> optical-density (log) inversion</label>
+      </div>
+      <div id="refctl" style="display:none">
+        <div class="muted">Drag a rectangle on a mid-tone frame region to set the reference, or use the whole frame.</div>
+        <div class="row" style="margin-top:6px">
+          <button onclick="startSample('ref')">Draw Reference Rect</button>
+          <span class="chip" id="v-ref">whole frame</span>
+        </div>
+      </div>
+      <label class="ck" style="margin-top:8px"><input type="checkbox" id="ws" checked onchange="refresh()"> working-space headroom</label>
+    </div>
+
+    <div class="sec">
+      <h3>Adjust</h3>
+      <div id="sliders"></div>
+    </div>
+
+    <div class="sec">
+      <h3>Roll</h3>
+      <div class="btns">
+        <button onclick="syncAll()">Sync to All</button>
+        <button onclick="resetAdj()">Reset Adjust</button>
+      </div>
+    </div>
+
+    <div class="sec">
+      <h3>Export</h3>
+      <div class="row"><input type="text" id="outDir" placeholder="output folder" style="flex:1"></div>
+      <div class="row">
+        <label class="ck"><input type="checkbox" id="jpg" checked> JPEG</label>
+        <label class="ck">q<input type="number" id="quality" value="95" min="1" max="100" style="width:56px"></label>
+      </div>
+      <div class="btns">
+        <button class="primary" onclick="exportRoll(true)">Export All</button>
+        <button onclick="exportRoll(false)">Export Current</button>
+      </div>
+      <div class="muted" id="exportMsg" style="margin-top:6px"></div>
+    </div>
+  </div>
+</main>
+
+<script>
+const SLIDERS = [
+  ["exposure","Exposure",-200,200],["brightness","Brightness",-100,100],
+  ["contrast","Contrast",-100,100],["saturation","Saturation",-100,100],
+  ["subsat","Sub-Sat",-100,100],["temp","Temp",-100,100],["tint","Tint",-100,100],
+  ["highlights","Highlights",-100,100],["shadows","Shadows",-100,100],
+  ["blackpoint","Black Pt",-100,100],["whitepoint","White Pt",-100,100],
+];
+const ADJ_KEYS = SLIDERS.map(s=>s[0]);
+let frames = [], cur = -1, params = {}, sampleMode = null, previewURL = null, refreshTimer = null;
+
+function newParams() {
+  const adj = {}; ADJ_KEYS.forEach(k=>adj[k]=0);
+  return { mode:"bwpoint", black:[0,0,0], white:[0,0,0], hasWhite:false, density:false,
+           ref:[0,0,1,1], hasRef:false, ws:true, adj };
+}
+function P(){ return params[cur]; }
+
+// Build sliders UI
+const sc = document.getElementById("sliders");
+SLIDERS.forEach(([k,lbl,lo,hi])=>{
+  const row=document.createElement("div"); row.className="row";
+  row.innerHTML=`<label>${lbl}</label><input type="range" min="${lo}" max="${hi}" value="0" id="sl-${k}"><span class="val" id="vv-${k}">0</span>`;
+  sc.appendChild(row);
+  row.querySelector("input").addEventListener("input",e=>{
+    const v=+e.target.value; P().adj[k]=v; document.getElementById("vv-"+k).textContent=v; refresh();
+  });
+});
+
+async function loadRoll(){
+  const dir=document.getElementById("dir").value.trim();
+  if(!dir) return;
+  setStatus("loading…");
+  const r=await fetch("/api/load",{method:"POST",headers:{'Content-Type':'application/json'},body:JSON.stringify({dir})});
+  if(!r.ok){ setStatus("error: "+await r.text()); return; }
+  const data=await r.json();
+  frames=data.frames; params={}; frames.forEach(f=>params[f.id]=newParams());
+  document.getElementById("outDir").value=data.outDir||"";
+  renderThumbs();
+  if(frames.length){ selectFrame(0); }
+  setStatus(`${frames.length} frames · ${data.dir}`);
+}
+
+function renderThumbs(){
+  const t=document.getElementById("thumbs"); t.innerHTML="";
+  frames.forEach(f=>{
+    const d=document.createElement("div"); d.className="thumb"+(f.id===cur?" sel":""); d.id="th-"+f.id;
+    d.innerHTML=`<img loading="lazy" src="/api/thumb?id=${f.id}"><div class="nm">${f.name}</div>`;
+    d.onclick=()=>selectFrame(f.id); t.appendChild(d);
+  });
+}
+
+function selectFrame(id){
+  cur=id;
+  document.querySelectorAll(".thumb").forEach(e=>e.classList.remove("sel"));
+  const th=document.getElementById("th-"+id); if(th) th.classList.add("sel");
+  loadParamsIntoUI(); refresh();
+}
+
+function loadParamsIntoUI(){
+  const p=P();
+  SLIDERS.forEach(([k])=>{ document.getElementById("sl-"+k).value=p.adj[k]; document.getElementById("vv-"+k).textContent=p.adj[k]; });
+  document.getElementById("ws").checked=p.ws;
+  document.getElementById("density").checked=p.density;
+  setModeUI(p.mode);
+  updateSwatch("black"); updateSwatch("white"); updateRefChip();
+}
+
+function setMode(m){ P().mode=m; setModeUI(m); refresh(); }
+function setModeUI(m){
+  document.getElementById("m-bw").classList.toggle("active",m==="bwpoint");
+  document.getElementById("m-ref").classList.toggle("active",m==="reference");
+  document.getElementById("bwctl").style.display=m==="bwpoint"?"block":"none";
+  document.getElementById("refctl").style.display=m==="reference"?"block":"none";
+}
+function onDensity(){ P().density=document.getElementById("density").checked; refresh(); }
+document.getElementById("ws").addEventListener("change",e=>{ P().ws=e.target.checked; refresh(); });
+
+function startSample(kind){
+  sampleMode=kind;
+  const stage=document.getElementById("stage"); stage.classList.add("sampling");
+  const h=document.getElementById("hint");
+  h.style.display="block";
+  h.textContent = kind==="ref" ? "Click-drag a rectangle over a mid-tone area" :
+                  "Click the "+(kind==="black"?"clear film base (bright rebate)":"densest exposed area");
+  ["s-black","s-white"].forEach(id=>document.getElementById(id).classList.remove("active"));
+  if(kind==="black")document.getElementById("s-black").classList.add("active");
+  if(kind==="white")document.getElementById("s-white").classList.add("active");
+}
+function endSample(){
+  sampleMode=null;
+  document.getElementById("stage").classList.remove("sampling");
+  document.getElementById("hint").style.display="none";
+  ["s-black","s-white"].forEach(id=>document.getElementById(id).classList.remove("active"));
+}
+
+const preview=document.getElementById("preview");
+let dragStart=null;
+preview.addEventListener("mousedown",e=>{ if(sampleMode==="ref"){ dragStart=norm(e); } });
+preview.addEventListener("mouseup",async e=>{
+  if(!sampleMode) return;
+  if(sampleMode==="ref" && dragStart){
+    const a=dragStart,b=norm(e);
+    P().ref=[Math.min(a.x,b.x),Math.min(a.y,b.y),Math.max(a.x,b.x),Math.max(a.y,b.y)];
+    P().hasRef=true; dragStart=null; updateRefChip(); endSample(); refresh(); return;
+  }
+  const n=norm(e);
+  const r=await fetch(`/api/sample?id=${cur}&x=${n.x}&y=${n.y}`);
+  if(r.ok){
+    const c=await r.json();
+    if(sampleMode==="black"){ P().black=[c.r,c.g,c.b]; }
+    else { P().white=[c.r,c.g,c.b]; P().hasWhite=true; }
+    updateSwatch(sampleMode); endSample(); refresh();
+  }
+});
+function norm(e){
+  const rect=preview.getBoundingClientRect();
+  return { x:Math.min(1,Math.max(0,(e.clientX-rect.left)/rect.width)),
+           y:Math.min(1,Math.max(0,(e.clientY-rect.top)/rect.height)) };
+}
+function updateSwatch(kind){
+  const p=P(); const v = kind==="black"?p.black:p.white;
+  const has = kind==="black"? (p.black[0]||p.black[1]||p.black[2]) : p.hasWhite;
+  const rgb = v.map(x=>Math.round(x/257));
+  document.getElementById("sw-"+kind).style.background = has?`rgb(${rgb[0]},${rgb[1]},${rgb[2]})`:"transparent";
+  document.getElementById("v-"+kind).textContent = has?
+    (kind==="black"?"film base ":"dense ")+rgb.join(",") :
+    (kind==="black"?"film base —":"dense — (optional)");
+}
+function updateRefChip(){
+  const p=P(); const r=p.ref;
+  document.getElementById("v-ref").textContent = p.hasRef?
+    `[${r.map(x=>x.toFixed(2)).join(", ")}]` : "whole frame";
+}
+
+function refresh(){
+  if(cur<0) return;
+  clearTimeout(refreshTimer);
+  refreshTimer=setTimeout(doPreview,80);
+}
+async function doPreview(){
+  if(cur<0) return;
+  const body=Object.assign({id:cur},P());
+  const r=await fetch("/api/preview",{method:"POST",headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+  if(!r.ok) return;
+  const blob=await r.blob();
+  if(previewURL) URL.revokeObjectURL(previewURL);
+  previewURL=URL.createObjectURL(blob); preview.src=previewURL;
+}
+
+function syncAll(){
+  const src=JSON.stringify(P());
+  frames.forEach(f=>{ params[f.id]=JSON.parse(src); });
+  setStatus(`synced current settings to ${frames.length} frames`);
+}
+function resetAdj(){ ADJ_KEYS.forEach(k=>P().adj[k]=0); loadParamsIntoUI(); refresh(); }
+
+async function exportRoll(all){
+  const list = all? frames.map(f=>f.id) : [cur];
+  const payload = { outDir:document.getElementById("outDir").value.trim(),
+    jpg:document.getElementById("jpg").checked, quality:+document.getElementById("quality").value,
+    frames: list.map(id=>Object.assign({id},params[id])) };
+  document.getElementById("exportMsg").textContent="exporting…";
+  const r=await fetch("/api/export",{method:"POST",headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+  const d=await r.json();
+  document.getElementById("exportMsg").textContent =
+    `${d.ok} exported${d.failed?", "+d.failed+" failed":""} in ${d.seconds.toFixed(1)}s → ${d.outDir}`+
+    (d.error?(" · "+d.error):"");
+}
+
+function setStatus(s){ document.getElementById("status").textContent=s; }
+</script>
+</body>
+</html>

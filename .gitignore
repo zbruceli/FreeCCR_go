@@ -1,0 +1,7 @@
+/bin/
+*.tif
+*.jpg
+*.jpeg
+*.png
+!src/icons/*
+scratch_*
