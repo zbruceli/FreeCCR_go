@@ -54,7 +54,18 @@
   #scopes canvas { background:#151515; border:1px solid var(--line); border-radius:4px; height:200px; }
   #parade { width:540px; } #vector { width:200px; }
   #preview { max-width:100%; max-height:100%; object-fit:contain; }
-  #stage.sampling { cursor:crosshair; }
+  #stage.sampling, #stage.cropping { cursor:crosshair; }
+  #toolbar { position:absolute; top:8px; left:8px; z-index:5; display:flex; gap:4px;
+             background:rgba(30,30,30,.82); padding:4px; border-radius:6px; border:1px solid var(--line); }
+  #toolbar button { padding:4px 8px; font-size:13px; }
+  #cropbar { position:absolute; bottom:10px; left:50%; transform:translateX(-50%); z-index:5;
+             display:flex; gap:8px; align-items:center; background:rgba(30,30,30,.9);
+             padding:6px 10px; border-radius:8px; border:1px solid var(--line); }
+  #cropbar label { font-size:11px; color:var(--dim); }
+  #cropbar input[type=range] { width:150px; accent-color:var(--accent); }
+  #cropbar .val { min-width:42px; font-size:11px; }
+  #cropbox { position:absolute; z-index:4; border:1px solid #fff; box-shadow:0 0 0 100vmax rgba(0,0,0,.45);
+             pointer-events:none; }
   #empty { text-align:center; color:var(--dim); user-select:none; padding:24px; }
   #empty .ei { font-size:58px; opacity:.75; margin-bottom:12px; filter:grayscale(.15); }
   #empty .et { font-size:16px; color:var(--txt); margin-bottom:8px; letter-spacing:.3px; }
@@ -121,7 +132,23 @@
   <div id="thumbs"></div>
   <div id="center">
   <div id="stage">
+    <div id="toolbar">
+      <button title="Rotate left" onclick="rotate(-90)">⟲</button>
+      <button title="Rotate right" onclick="rotate(90)">⟳</button>
+      <button title="Flip horizontal" onclick="flip('h')">⇋</button>
+      <button title="Flip vertical" onclick="flip('v')">⇅</button>
+      <button id="crop-btn" title="Crop" onclick="toggleCrop()">⌗&nbsp;Crop</button>
+    </div>
+    <div id="cropbar" style="display:none">
+      <label>Straighten</label>
+      <input type="range" min="-450" max="450" value="0" id="straighten">
+      <span class="val" id="vv-straighten">0.0°</span>
+      <button onclick="applyCrop()" class="primary">Apply</button>
+      <button onclick="clearCrop()">Clear</button>
+      <button onclick="toggleCrop()">Done</button>
+    </div>
     <img id="preview" alt="" style="display:none">
+    <div id="cropbox" style="display:none"></div>
     <div id="empty">
       <div class="ei">🎞️</div>
       <div class="et">No roll loaded</div>
@@ -173,6 +200,17 @@
 
     <div class="sec">
       <h3>Adjust</h3>
+      <div class="btns" style="margin-bottom:8px">
+        <button id="s-wb" onclick="startSample('wb')">WB Picker</button>
+        <button onclick="autoWB()">Auto WB</button>
+        <button onclick="autoExposure()">Auto Exp</button>
+        <select id="awbAlgo" style="background:var(--panel2);border:1px solid var(--line);color:var(--txt);border-radius:5px;padding:4px;font-size:11px">
+          <option value="gray_world">Gray World</option>
+          <option value="white_patch">White Patch</option>
+          <option value="shades_of_gray">Shades of Gray</option>
+          <option value="gray_edge">Gray Edge</option>
+        </select>
+      </div>
       <div id="sliders"></div>
     </div>
 
@@ -290,7 +328,8 @@ function newParams() {
            ref:[0,0,1,1], hasRef:false, ws:true, adj,
            gamma:0, gammaLum:false, cineon:false,
            bands:BANDS.map(()=>[0,0,0,0]), feather:10,
-           curves:{rgb:[],r:[],g:[],b:[]} };
+           curves:{rgb:[],r:[],g:[],b:[]},
+           rotation:0, hflip:false, vflip:false, fine:0, crop:[0,0,1,1], hasCrop:false };
 }
 function P(){ return params[cur]; }
 
@@ -469,6 +508,11 @@ function renderThumbs(){
 }
 
 function selectFrame(id){
+  if(cropMode){ cropMode=false;
+    document.getElementById("cropbar").style.display="none";
+    document.getElementById("crop-btn").classList.remove("active");
+    document.getElementById("stage").classList.remove("cropping");
+    document.getElementById("cropbox").style.display="none"; }
   cur=id;
   document.querySelectorAll(".thumb").forEach(e=>e.classList.remove("sel"));
   const th=document.getElementById("th-"+id); if(th) th.classList.add("sel");
@@ -506,16 +550,17 @@ function startSample(kind){
   const h=document.getElementById("hint");
   h.style.display="block";
   h.textContent = kind==="ref" ? "Click-drag a rectangle over a mid-tone area" :
+                  kind==="wb" ? "Click a point that should be neutral gray" :
                   "Click the "+(kind==="black"?"clear film base (bright rebate)":"densest exposed area");
-  ["s-black","s-white"].forEach(id=>document.getElementById(id).classList.remove("active"));
-  if(kind==="black")document.getElementById("s-black").classList.add("active");
-  if(kind==="white")document.getElementById("s-white").classList.add("active");
+  ["s-black","s-white","s-wb"].forEach(id=>{const el=document.getElementById(id);if(el)el.classList.remove("active");});
+  const act={black:"s-black",white:"s-white",wb:"s-wb"}[kind];
+  if(act)document.getElementById(act).classList.add("active");
 }
 function endSample(){
   sampleMode=null;
   document.getElementById("stage").classList.remove("sampling");
   document.getElementById("hint").style.display="none";
-  ["s-black","s-white"].forEach(id=>document.getElementById(id).classList.remove("active"));
+  ["s-black","s-white","s-wb"].forEach(id=>{const el=document.getElementById(id);if(el)el.classList.remove("active");});
 }
 
 const preview=document.getElementById("preview");
@@ -527,6 +572,14 @@ preview.addEventListener("mouseup",async e=>{
     const a=dragStart,b=norm(e);
     P().ref=[Math.min(a.x,b.x),Math.min(a.y,b.y),Math.max(a.x,b.x),Math.max(a.y,b.y)];
     P().hasRef=true; dragStart=null; updateRefChip(); endSample(); refresh(); return;
+  }
+  if(sampleMode==="wb"){
+    const n=norm(e);
+    const r=await fetch("/api/wbpick",{method:"POST",headers:{'Content-Type':'application/json'},
+      body:JSON.stringify(Object.assign(curSpec(),{x:n.x,y:n.y}))});
+    if(r.ok){ const c=await r.json(); P().adj.temp=c.temp; P().adj.tint=c.tint; loadParamsIntoUI();
+      setStatus(`WB picked → temp ${c.temp}, tint ${c.tint}`); }
+    endSample(); refresh(); return;
   }
   const n=norm(e);
   const r=await fetch(`/api/sample?id=${cur}&x=${n.x}&y=${n.y}`);
@@ -682,9 +735,66 @@ function refresh(){
   clearTimeout(refreshTimer);
   refreshTimer=setTimeout(doPreview,80);
 }
+function curSpec(){ const s=Object.assign({id:cur},P()); s.cropEditing=cropMode; return s; }
+
+// --- Geometry: rotate / flip / straighten / crop ---
+let cropMode=false, cropDragging=false, cropStart=null;
+function rotate(delta){ if(cur<0)return; P().rotation=((P().rotation+delta)%360+360)%360; refresh(); }
+function flip(axis){ if(cur<0)return; if(axis==="h")P().hflip=!P().hflip; else P().vflip=!P().vflip; refresh(); }
+document.getElementById("straighten").addEventListener("input",e=>{
+  P().fine=+e.target.value/10; document.getElementById("vv-straighten").textContent=(P().fine).toFixed(1)+"°"; refresh();
+});
+function toggleCrop(){
+  if(cur<0)return;
+  cropMode=!cropMode;
+  document.getElementById("cropbar").style.display=cropMode?"flex":"none";
+  document.getElementById("crop-btn").classList.toggle("active",cropMode);
+  document.getElementById("stage").classList.toggle("cropping",cropMode);
+  if(cropMode){
+    const p=P(); document.getElementById("straighten").value=p.fine*10;
+    document.getElementById("vv-straighten").textContent=p.fine.toFixed(1)+"°";
+    showCropBox(p.hasCrop?p.crop:null);
+  } else { document.getElementById("cropbox").style.display="none"; }
+  refresh();
+}
+function applyCrop(){ P().hasCrop=true; toggleCrop(); }
+function clearCrop(){ P().hasCrop=false; P().crop=[0,0,1,1]; document.getElementById("cropbox").style.display="none"; refresh(); }
+function showCropBox(rect){
+  const box=document.getElementById("cropbox");
+  if(!rect){ box.style.display="none"; return; }
+  const r=preview.getBoundingClientRect(), sr=document.getElementById("stage").getBoundingClientRect();
+  box.style.display="block";
+  box.style.left=(r.left-sr.left+rect[0]*r.width)+"px";
+  box.style.top=(r.top-sr.top+rect[1]*r.height)+"px";
+  box.style.width=((rect[2]-rect[0])*r.width)+"px";
+  box.style.height=((rect[3]-rect[1])*r.height)+"px";
+}
+preview.addEventListener("mousedown",e=>{ if(cropMode){ cropDragging=true; cropStart=norm(e); } });
+window.addEventListener("mousemove",e=>{
+  if(!cropDragging)return; const a=cropStart,b=norm(e);
+  P().crop=[Math.min(a.x,b.x),Math.min(a.y,b.y),Math.max(a.x,b.x),Math.max(a.y,b.y)];
+  showCropBox(P().crop);
+});
+window.addEventListener("mouseup",()=>{ cropDragging=false; });
+async function autoWB(){
+  if(cur<0) return;
+  const r=await fetch("/api/autowb",{method:"POST",headers:{'Content-Type':'application/json'},
+    body:JSON.stringify(Object.assign(curSpec(),{algo:document.getElementById("awbAlgo").value}))});
+  const d=await r.json();
+  if(d.ok){ P().adj.temp=d.temp; P().adj.tint=d.tint; loadParamsIntoUI(); refresh();
+    setStatus(`Auto WB → temp ${d.temp}, tint ${d.tint}`); }
+  else setStatus("Auto WB: not enough neutral content");
+}
+async function autoExposure(){
+  if(cur<0) return;
+  const r=await fetch("/api/autoexposure",{method:"POST",headers:{'Content-Type':'application/json'},body:JSON.stringify(curSpec())});
+  const d=await r.json(); const v=Math.round(d.exposure);
+  P().adj.exposure=v; loadParamsIntoUI(); refresh(); setStatus(`Auto Exposure → ${v}`);
+}
 async function doPreview(){
   if(cur<0) return;
   const body=Object.assign({id:cur},P());
+  body.cropEditing=cropMode;
   const r=await fetch("/api/preview",{method:"POST",headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
   if(!r.ok) return;
   const blob=await r.blob();

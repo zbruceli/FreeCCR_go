@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/zhengli/freeccr-go/internal/adjust"
+	"github.com/zhengli/freeccr-go/internal/auto"
 	"github.com/zhengli/freeccr-go/internal/decode"
 	"github.com/zhengli/freeccr-go/internal/export"
 	"github.com/zhengli/freeccr-go/internal/image"
@@ -59,6 +60,9 @@ func main() {
 	mux.HandleFunc("/api/thumb", s.handleThumb)
 	mux.HandleFunc("/api/preview", s.handlePreview)
 	mux.HandleFunc("/api/sample", s.handleSample)
+	mux.HandleFunc("/api/autowb", s.handleAutoWB)
+	mux.HandleFunc("/api/autoexposure", s.handleAutoExposure)
+	mux.HandleFunc("/api/wbpick", s.handleWBPick)
 	mux.HandleFunc("/api/export", s.handleExport)
 
 	fmt.Printf("FreeCCR-go UI → http://%s\n", *addr)
@@ -103,6 +107,14 @@ type specReq struct {
 	Bands    [7][4]float64 `json:"bands"`
 	Feather  float64       `json:"feather"`
 	Curves   curvesDTO     `json:"curves"`
+	// Geometry
+	Rotation     int        `json:"rotation"`
+	HFlip        bool       `json:"hflip"`
+	VFlip        bool       `json:"vflip"`
+	FineRotation float64    `json:"fine"`
+	Crop         [4]float64 `json:"crop"`
+	HasCrop      bool       `json:"hasCrop"`
+	CropEditing  bool       `json:"cropEditing"`
 }
 
 func (r *specReq) toSpec() pipeline.Spec {
@@ -141,6 +153,10 @@ func (r *specReq) toSpec() pipeline.Spec {
 	if !cv.IsIdentity() {
 		sp.Curves = cv
 	}
+	// Geometry.
+	sp.Rotation, sp.HFlip, sp.VFlip = r.Rotation, r.HFlip, r.VFlip
+	sp.FineRotation = r.FineRotation
+	sp.Crop, sp.HasCrop, sp.CropEditing = r.Crop, r.HasCrop, r.CropEditing
 	return sp
 }
 
@@ -329,6 +345,112 @@ func (s *server) handleSample(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]float64{
 		"r": sr / float64(n), "g": sg / float64(n), "b": sb / float64(n),
 	})
+}
+
+// handleAutoWB estimates the white-balance cast of the converted base and
+// returns the temp/tint sliders that neutralize it.
+func (s *server) handleAutoWB(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		specReq
+		Algo string `json:"algo"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, err.Error(), 400)
+		return
+	}
+	f := s.sess.Frame(req.ID)
+	if f == nil || f.Preview == nil {
+		http.Error(w, "no such frame", 404)
+		return
+	}
+	sp := req.specReq.toSpec()
+	base, ws := sp.ConvertBase(f.Preview)
+	defer image.PutBuf(base.Pix)
+	algo := req.Algo
+	if algo == "" {
+		algo = "gray_world"
+	}
+	temp, tint, ok := auto.AWBTempTint(base, ws, algo, 1.0)
+	writeJSON(w, map[string]any{"ok": ok, "temp": temp, "tint": tint})
+}
+
+// handleAutoExposure returns the exposure slider that places the P98 highlight
+// at 98% of full scale on the converted base.
+func (s *server) handleAutoExposure(w http.ResponseWriter, r *http.Request) {
+	var req specReq
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, err.Error(), 400)
+		return
+	}
+	f := s.sess.Frame(req.ID)
+	if f == nil || f.Preview == nil {
+		http.Error(w, "no such frame", 404)
+		return
+	}
+	sp := req.toSpec()
+	base, ws := sp.ConvertBase(f.Preview)
+	defer image.PutBuf(base.Pix)
+	writeJSON(w, map[string]any{"exposure": auto.AutoExposureGain(base, ws)})
+}
+
+// handleWBPick samples a neutral point on the converted base and returns the
+// temp/tint that neutralizes it (the WB eyedropper).
+func (s *server) handleWBPick(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		specReq
+		X float64 `json:"x"`
+		Y float64 `json:"y"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, err.Error(), 400)
+		return
+	}
+	f := s.sess.Frame(req.ID)
+	if f == nil || f.Preview == nil {
+		http.Error(w, "no such frame", 404)
+		return
+	}
+	sp := req.specReq.toSpec()
+	base, ws := sp.ConvertBase(f.Preview)
+	defer image.PutBuf(base.Pix)
+	// Mean over a small patch; de-window so channel ratios are the display ones.
+	cx := int(req.X * float64(base.W))
+	cy := int(req.Y * float64(base.H))
+	const rad = 3
+	var sr, sg, sb float64
+	n := 0
+	for yy := cy - rad; yy <= cy+rad; yy++ {
+		if yy < 0 || yy >= base.H {
+			continue
+		}
+		for xx := cx - rad; xx <= cx+rad; xx++ {
+			if xx < 0 || xx >= base.W {
+				continue
+			}
+			o := (yy*base.W + xx) * 3
+			vr, vg, vb := deWindow(base.Pix, o, ws)
+			sr += vr
+			sg += vg
+			sb += vb
+			n++
+		}
+	}
+	if n == 0 {
+		http.Error(w, "out of bounds", 400)
+		return
+	}
+	temp, tint := auto.NeutralTempTint(sr/float64(n), sg/float64(n), sb/float64(n), 1.0)
+	writeJSON(w, map[string]any{"temp": temp, "tint": tint})
+}
+
+// deWindow returns a pixel's channels with the working-space offset removed (so
+// ratios are the display ratios); a no-op for non-windowed bases.
+func deWindow(pix []float32, o int, ws bool) (float64, float64, float64) {
+	if ws {
+		const wsB = 512.0
+		return float64(pix[o]) - wsB, float64(pix[o+1]) - wsB, float64(pix[o+2]) - wsB
+	}
+	return float64(pix[o]), float64(pix[o+1]), float64(pix[o+2])
 }
 
 func (s *server) handleExport(w http.ResponseWriter, r *http.Request) {

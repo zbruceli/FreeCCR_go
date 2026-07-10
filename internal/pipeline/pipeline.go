@@ -14,6 +14,7 @@ import (
 	"github.com/zhengli/freeccr-go/internal/convert"
 	"github.com/zhengli/freeccr-go/internal/decode"
 	"github.com/zhengli/freeccr-go/internal/export"
+	"github.com/zhengli/freeccr-go/internal/geometry"
 	"github.com/zhengli/freeccr-go/internal/image"
 	"github.com/zhengli/freeccr-go/internal/par"
 )
@@ -48,36 +49,75 @@ type Spec struct {
 	GammaLuminance bool
 	Curves         *adjust.Curves
 	Cineon         bool
+	// Geometry (applied after the look chain): rotate → flips → straighten → crop.
+	Rotation     int // 0/90/180/270 clockwise
+	HFlip, VFlip bool
+	FineRotation float64    // degrees
+	Crop         [4]float64 // normalized x0,y0,x1,y1
+	HasCrop      bool
+	CropEditing  bool // skip the crop (show the uncropped frame while editing)
+}
+
+// ConvertBase runs only the negative→positive conversion and returns the
+// converted base plus whether it is a working-space windowed base. The caller
+// owns the returned buffer. Used by the auto tools (auto-WB / auto-exposure),
+// which operate on the base before adjustments.
+func (s *Spec) ConvertBase(im *image.Image) (*image.Image, bool) {
+	ws := s.WS
+	switch s.Mode {
+	case ModeReference:
+		params := s.Ref
+		if params == nil {
+			crop := im.CropNormRect(s.RefRect[0], s.RefRect[1], s.RefRect[2], s.RefRect[3])
+			p := convert.ComputeReferenceNormParams(crop)
+			image.PutBuf(crop.Pix)
+			params = &p
+		}
+		return convert.ApplyReferenceNormalization(im, *params), false
+	default:
+		if s.HasWhite {
+			return convert.TwoPointInvert(im, s.Black, s.White, s.Density, ws), ws
+		}
+		return convert.DefaultSlopeInvert(im, s.Black, s.Slopes, ws), ws
+	}
 }
 
 // Process runs the full conversion + adjustment chain on one decoded image and
 // returns the final quantized image. The input buffer is left untouched (the
 // caller owns it); intermediate buffers are recycled to the pool.
 func (s *Spec) Process(im *image.Image) *image.Image {
-	ws := s.WS
-	var conv *image.Image
-	switch s.Mode {
-	case ModeReference:
-		params := s.Ref
-		if params == nil {
-			// Per-frame auto: derive params from this frame's reference rect.
-			crop := im.CropNormRect(s.RefRect[0], s.RefRect[1], s.RefRect[2], s.RefRect[3])
-			p := convert.ComputeReferenceNormParams(crop)
-			image.PutBuf(crop.Pix)
-			params = &p
-		}
-		conv = convert.ApplyReferenceNormalization(im, *params)
-		ws = false // reference path applies its own inversion + look, not windowed
-	default:
-		if s.HasWhite {
-			conv = convert.TwoPointInvert(im, s.Black, s.White, s.Density, ws)
-		} else {
-			conv = convert.DefaultSlopeInvert(im, s.Black, s.Slopes, ws)
-		}
-	}
+	conv, ws := s.ConvertBase(im)
 	final := adjust.AdjustImage(conv, s.Adjust, ws)
 	image.PutBuf(conv.Pix)
-	return s.applyLook(final)
+	return s.applyGeometry(s.applyLook(final))
+}
+
+// applyGeometry runs orientation + crop after the look chain, recycling
+// intermediate buffers. Order mirrors FreeCCR's export tail.
+func (s *Spec) applyGeometry(im *image.Image) *image.Image {
+	cur := im
+	adv := func(next *image.Image) {
+		if next != cur {
+			image.PutBuf(cur.Pix)
+			cur = next
+		}
+	}
+	if s.Rotation%360 != 0 {
+		adv(geometry.Rotate90CW(cur, s.Rotation/90))
+	}
+	if s.HFlip {
+		adv(geometry.FlipH(cur))
+	}
+	if s.VFlip {
+		adv(geometry.FlipV(cur))
+	}
+	if s.FineRotation != 0 {
+		adv(geometry.FineRotate(cur, s.FineRotation))
+	}
+	if s.HasCrop && !s.CropEditing {
+		adv(geometry.Crop(cur, s.Crop))
+	}
+	return cur
 }
 
 // applyLook runs the post-slider tone stages (gamma → curves → cineon), each
