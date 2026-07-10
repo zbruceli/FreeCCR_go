@@ -130,6 +130,24 @@ Roll…** uses the native folder picker; ⌘E exports all. (Cross-platform build
 possible — Wails targets Windows/Linux too — but only the macOS bundle is wired
 up here.)
 
+The bundle gets a generated icon (`tools/genicon`) and is **code-signed** under
+the hardened runtime — the build script auto-uses a "Developer ID Application"
+identity from your keychain (override with `SIGN_IDENTITY="…"`), or ad-hoc signs
+if none is found. Entitlements (`scripts/entitlements.plist`) allow the WebKit
+JIT and loading the homebrew libraw dylib.
+
+To **notarize** for distribution (first-launch without a Gatekeeper warning),
+store credentials once and pass the profile name:
+
+```bash
+xcrun notarytool store-credentials freeccr \
+  --apple-id you@example.com --team-id 95YB4MZ4F9 --password <app-specific-pw>
+NOTARY_PROFILE=freeccr make app     # signs, submits, staples
+```
+
+Without notarization the signed app still runs locally (right-click → **Open**
+the first time, since Gatekeeper flags an unnotarized Developer ID build).
+
 ### Web UI (browser)
 
 ```bash
