@@ -501,7 +501,13 @@ cvCanvas.addEventListener("dblclick",e=>{ const[cx,cy]=curveMouse(e); const i=ne
 
 // --- folder picker ---
 let browseCur="", browseParent="", browseHome="";
-function openBrowse(){
+async function openBrowse(){
+  // Native folder dialog when running inside the Wails desktop app.
+  if(window.go && window.go.main && window.go.main.App && window.go.main.App.PickFolder){
+    const p = await window.go.main.App.PickFolder();
+    if(p){ document.getElementById("dir").value=p; loadRoll(); }
+    return;
+  }
   document.getElementById("browseModal").style.display="flex";
   browseGo(document.getElementById("dir").value.trim());
 }
@@ -973,6 +979,12 @@ function setStatus(s){ document.getElementById("status").textContent=s; }
   if(q.get("scopes")==="1"){ scopesOpen=true; document.getElementById("scopes").classList.remove("collapsed"); }
   const d=q.get("dir"); if(d){ document.getElementById("dir").value=d; loadRoll(); }
   if(q.get("sync")==="1") setTimeout(openSyncModal, 1500); })();
+
+// Native menu bridge (Wails desktop app only).
+if(window.runtime && window.runtime.EventsOn){
+  window.runtime.EventsOn("menu:open-roll", p=>{ document.getElementById("dir").value=p; loadRoll(); });
+  window.runtime.EventsOn("menu:export", ()=>exportRoll('all'));
+}
 </script>
 </body>
 </html>

@@ -8,7 +8,7 @@ BIN        := bin
 LIBRAW_ENV := CGO_ENABLED=1 CGO_LDFLAGS_ALLOW='-Xpreprocessor|-fopenmp'
 LIBRAW_TAG := -tags libraw
 
-.PHONY: build build-raw serve serve-raw test test-raw golden vet fmt clean
+.PHONY: build build-raw serve serve-raw app run-app test test-raw golden vet fmt clean
 
 ## CLI + web server (standard formats only, no cgo).
 build:
@@ -23,6 +23,14 @@ build-raw:
 ## Build (with RAW) and launch the local web UI.
 serve: build-raw
 	$(BIN)/freeccrd
+
+## Native desktop app (Wails webview + libraw) → bin/FreeCCR-go.app (macOS).
+app:
+	bash scripts/build_macos_app.sh
+
+## Build and launch the desktop app.
+run-app: app
+	open $(BIN)/FreeCCR-go.app
 
 test:
 	go test ./...

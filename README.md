@@ -114,7 +114,23 @@ bin/freeccr batch ./roll -o ./out --format dng \
 bin/freeccr decode scan.dng -o decoded.tif
 ```
 
-### Web UI
+### Desktop app (macOS)
+
+The same UI packaged as a native window via **Wails** (WebKit webview + native
+menu + native folder dialogs), sharing one code path with the web build
+(`internal/ui`).
+
+```bash
+make run-app          # build bin/FreeCCR-go.app and open it
+# or just: make app   # build the .app bundle
+```
+
+Needs `brew install libraw` and the Xcode command line tools. **File → Open
+Roll…** uses the native folder picker; ⌘E exports all. (Cross-platform builds are
+possible — Wails targets Windows/Linux too — but only the macOS bundle is wired
+up here.)
+
+### Web UI (browser)
 
 ```bash
 make serve                    # build (with RAW) + launch
@@ -134,7 +150,11 @@ with no args for all options.
 
 ```
 cmd/freeccr        CLI: convert one file / batch a folder / decode
-cmd/freeccrd       local web server + embedded SPA (web/)
+cmd/freeccrd       local web server over the shared UI handler
+cmd/freeccr-app    native desktop app (Wails webview + menu + dialogs)
+internal/ui        embedded SPA + JSON/binary API as one http.Handler (shared)
+internal/auto      auto-WB (4 algorithms), auto-exposure, WB-picker
+internal/geometry  90° rotate, flips, fine straighten, crop
 internal/image     flat float32 interleaved-RGB buffer + sync.Pool
 internal/par       goroutine row-tiling; per-frame vs per-row parallelism switch
 internal/convert   negative→positive kernels (bwpoint, reference, look, window)
