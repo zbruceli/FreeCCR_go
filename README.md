@@ -1,227 +1,115 @@
 # FreeCCR-go
 
-A high-performance Go port of [FreeCCR](https://github.com/toonoumi/FreeCCR)'s
-core image pipeline — color-negative film-scan → positive conversion + color
-correction. The original is a Python 3.11 / PySide6 desktop app; this port
-reimplements the performance-critical **processing core** in Go with fused,
-row-parallel kernels, exposed through a headless engine + CLI (a local web UI is
-planned).
+A fast, cross-platform Go port of [FreeCCR](https://github.com/toonoumi/FreeCCR) —
+turn color-negative film scans into positives with a physics-based conversion
+(not a naive `255 − value` invert) and a full color-correction suite. Ships as a
+**native desktop app** (macOS / Windows / Linux), a **local web UI**, and a
+scriptable **CLI**. RAW-native, and validated **bit-exact** against the original
+Python.
 
-## Status
+## Features
 
-| Phase | Scope | State |
-|-------|-------|-------|
-| 0 | Skeleton, `Image` type, golden fidelity harness | ✅ done |
-| 1 | Core convert + adjust (standard formats) + CLI | ✅ done |
-| 2 | RAW decode via cgo + libraw | ✅ done |
-| 3 | Batch pipeline + benchmarks + LUT optimization | ✅ done |
-| 4 | Local web UI (`freeccrd`) | ✅ done |
+- **Conversion** — two-point B/W-point (linear + optical-density log), black-point-only default-slope, and auto/reference percentile modes, with working-space highlight headroom.
+- **Color correction** — white balance / temp / tint, exposure, brightness, highlights & shadows, black/white point, contrast, saturation, subtractive saturation, and per-channel R/G/B levels.
+- **Look** — monotone-cubic tone **curves** (composite + per-channel), a **gamma** slider (per-channel or hue-preserving), **7-band HSV color vectors**, and a **Cineon → Rec.709** transform.
+- **Analysis** — live RGB **histogram**, RGB **parade** waveform + **vectorscope**, and a hover pixel probe.
+- **Geometry & view** — crop, straighten, 90° rotate, H/V flip, zoom & pan.
+- **Assisted** — auto-white-balance (4 algorithms), auto-exposure, and a WB eyedropper.
+- **Roll workflow** — batch convert/export, **Sync to All** (by group), and copy/paste adjustments across frames.
+- **I/O** — RAW (CR2/CR3/NEF/ARW/DNG/…) via libraw plus TIFF/JPEG/PNG in; 16-bit TIFF, 8-bit JPEG, or **linear DNG** out.
 
-**Deferred** (additive on top of the core): dust removal / AI detect,
-IT8/DCP/ICC profiling, crop/straighten, Metal GPU.
+## Install & run
+
+### Desktop app
+
+Prebuilt macOS / Windows / Linux binaries are produced by CI — grab them from the
+latest [Actions run](https://github.com/zbruceli/FreeCCR_go/actions) (or a tagged
+release). To build the macOS app locally:
+
+```bash
+brew install libraw          # RAW support; Xcode CLT provides the webview
+make run-app                 # → bin/FreeCCR-go.app, then launches it
+```
+
+The app is code-signed with your keychain's *Developer ID Application* identity if
+present (else ad-hoc). For distribution, notarize once:
+`NOTARY_PROFILE=<profile> make app` (after `xcrun notarytool store-credentials`).
+Linux needs `libgtk-3` + `webkit2gtk`; Windows uses the built-in WebView2.
+
+### CLI
+
+```bash
+make build-raw               # bin/freeccr with RAW (needs libraw); or `make build` (no RAW)
+
+# Two-point B/W conversion — sample the clear film base and a dense area:
+bin/freeccr convert scan.cr3 -o positive.tif \
+    --black 61000,58000,52000 --white 9150,8700,7800 --density
+
+# Adjustments + JPEG (or .dng / .tif — format follows the extension):
+bin/freeccr convert scan.tif -o positive.jpg --black 61000,58000,52000 \
+    --contrast 20 --saturation 15
+
+# Whole roll → one folder, shared settings, all cores:
+bin/freeccr batch ./roll -o ./out --format dng \
+    --black 61000,58000,52000 --white 9150,8700,7800 --density
+```
+
+`--black`/`--white` are `R,G,B` scan values (clear film base = HIGH, dense area =
+LOW). Run `bin/freeccr convert` with no args for all options.
+
+### Web UI
+
+```bash
+make serve                   # → http://127.0.0.1:8422
+```
+
+Load a folder, click a thumbnail, **Set Black Pt** on the clear film base
+(optionally **Set White Pt** on a dense area), tune with live preview, **Sync to
+All**, then **Export All**.
 
 ## Fidelity
 
-Every kernel is validated **against the Python numerically**. `ref/gen_golden.py`
-transliterates the exact numpy kernels from `ccr_processor.py` and emits fixtures;
-Go tests assert a ≤1-LSB match (most cases bit-exact). Run:
+Every conversion and color kernel is validated numerically against the **actual
+FreeCCR Python code** (the real numpy/cv2 math) on byte-identical pixels: the
+B/W-point linear path is **bit-exact**, everything else lands within a few LSB,
+and every residual traces to float32 (numpy/cv2) vs float64 (Go) arithmetic — far
+below visible. RAW decode is bit-exact against libraw's own `dcraw_emu` over a
+40 MP frame. Details in [`ref/AB.md`](ref/AB.md); regenerate/check with
+`go test ./...`.
 
-```bash
-python3 ref/gen_golden.py             # convert/adjust/curves/gamma fixtures (numpy)
-python ref/gen_bands.py <FreeCCR/src> # color-band fixtures (needs the cv2 venv)
-go test ./...                         # most cases bit-exact, rest ≤1–2 LSB
-```
+## Performance
 
-Curves, gamma, and cineon are pure-numpy LUTs (bit-exact / ≤1 LSB). Color bands
-replicate OpenCV's float HSV conversion (FLT_EPSILON + sector table) and are
-validated ≤1 LSB against the **real cv2** `apply_color_band_adjustments`.
+Fused single-pass kernels, per-channel LUTs built once per roll, and goroutine
+parallelism (no GIL) make the core several times faster than the numpy original.
+Compute core at 2000×1333 (2.67 MP) on a 14-core Mac, vs the exact numpy math:
 
-The port reproduces numpy's semantics deliberately: float32 working values,
-`clip→truncate` at uint16 boundaries, RGB channel order (channel 0 = R), and
-numpy's percentile interpolation.
+| Operation | numpy (1 core) | Go (14 core) | speedup |
+|---|---:|---:|---:|
+| adjust chain (all stages) | 304 ms | **41 ms** | 7.4× |
+| two-point density invert | 23.5 ms | **15 ms** | 1.6× |
+| reference normalize + look | 113 ms | **37 ms** | 3.1× |
 
-Beyond the unit-test golden fixtures, an **A/B harness** (`ref/ab.py`) runs the
-**actual FreeCCR Python code** (the real cv2/numpy kernels) and the Go port on
-byte-identical scans and diffs the 16-bit outputs. Result: the recommended
-**B/W-point linear** conversion is **bit-exact**; density mode is within ≤1 LSB
-non-windowed (mean ≪ 1 LSB windowed); auto/reference within a few LSB. Every
-residual traces to float32(numpy/cv2) vs float64(Go) arithmetic and is far below
-visible. See [`ref/AB.md`](ref/AB.md).
-
-## What's implemented
-
-- **Conversion** (`internal/convert`)
-  - Two-point B/W-point inversion — linear + optical-density (log) modes
-  - Default-slope (black-point-only) inversion, with optional film-stock slopes
-  - Reference/auto percentile normalization + OD alignment + post-invert look
-  - Working-space windowing (highlight headroom) + headroom recovery
-- **Adjustment** (`internal/adjust`) — the full `adjust_image` slider chain fused
-  into one row-parallel pass: white balance, exposure, brightness,
-  highlights/shadows, black/white point, contrast, saturation, subtractive
-  saturation, per-channel levels. Plus the "look" stages: **monotone-cubic tone
-  curves** (per-channel + composite), the **gamma** slider (per-channel +
-  hue-preserving luminance mode), **7-band color vectors** (HSV hue/sat/bright/
-  subsat with OpenCV-faithful HSV conversion and spatial feather), and the
-  **Cineon→Rec.709** transform.
-- **Local web UI** (`cmd/freeccrd`) — a Go `net/http` server with an embedded
-  single-page app: load a roll → thumbnail strip, click the preview to sample
-  the film-base (black) and dense (white) anchors, live convert + adjust with
-  every slider, **Sync to All** across the roll, and parallel full-resolution
-  **Export All**. All processing is local.
-- **I/O** — TIFF/JPEG/PNG decode (`internal/decode`), plus **RAW** (CR2/CR3/NEF/
-  ARW/DNG/…) via cgo + libraw, matching FreeCCR's rawpy decode (AHD, 16-bit,
-  linear, no auto-bright, Adobe RGB, auto-scaled). Verified **bit-exact** against
-  libraw's own `dcraw_emu` (maxAbsDiff=0 over a 40MP frame). Export as 16-bit
-  TIFF, 8-bit JPEG, or **linear DNG** (`internal/export`; the DNG imports the
-  converted positive into raw editors).
-
-## Build & run
-
-```bash
-# Standard formats only (pure Go, no cgo):
-go build -o bin/freeccr ./cmd/freeccr        # or: make build
-
-# Full engine with RAW support (needs `brew install libraw`):
-make build-raw                                # sets the cgo flags for you
-
-# Two-point B/W conversion (sample film base + dense area from the scan):
-bin/freeccr convert scan.tif -o positive.tif \
-    --black 61000,58000,52000 --white 9150,8700,7800
-
-# Density mode + adjustments, JPEG out:
-bin/freeccr convert scan.tif -o positive.jpg --jpg \
-    --black 61000,58000,52000 --white 9150,8700,7800 \
-    --density --contrast 20 --saturation 15
-
-# Black-point-only (default slope):
-bin/freeccr convert scan.tif -o positive.jpg --jpg --black 61000,58000,52000
-
-# Auto/reference mode (percentile anchors from a reference rectangle):
-bin/freeccr convert scan.tif -o positive.jpg --jpg \
-    --mode reference --ref 0.0,0.0,0.15,0.2
-
-# RAW input (with a libraw build) works identically:
-bin/freeccr convert scan.cr3 -o positive.tif --black 61000,58000,52000
-
-# Export as linear DNG (imports into Lightroom / Camera Raw / RawTherapee):
-bin/freeccr convert scan.tif -o positive.dng --black 61000,58000,52000
-
-# Whole roll → one output folder, shared settings, all cores:
-bin/freeccr batch ./roll -o ./out --format dng \
-    --black 61000,58000,52000 --white 9150,8700,7800 --density --contrast 20
-
-# Passthrough decode (no conversion) — writes the decoded 16-bit TIFF:
-bin/freeccr decode scan.dng -o decoded.tif
-```
-
-### Desktop app (macOS)
-
-The same UI packaged as a native window via **Wails** (WebKit webview + native
-menu + native folder dialogs), sharing one code path with the web build
-(`internal/ui`).
-
-```bash
-make run-app          # build bin/FreeCCR-go.app and open it
-# or just: make app   # build the .app bundle
-```
-
-Needs `brew install libraw` and the Xcode command line tools. **File → Open
-Roll…** uses the native folder picker; ⌘E exports all.
-
-**Windows & Linux.** Wails targets all three, but the webview (WebKitGTK on
-Linux) and libraw don't cross-compile from macOS, so those are built on their own
-OS. A GitHub Actions workflow (`.github/workflows/build.yml`) builds all three on
-native runners (apt / brew / MSYS2 for libraw) and uploads per-platform
-artifacts. A console-free Windows `.exe` (standard formats, no RAW) *can* be
-cross-built from any host:
-
-```bash
-make build-windows      # → bin/FreeCCR.exe (cgo-free; RAW needs the CI/MSYS2 build)
-```
-
-The bundle gets a generated icon (`tools/genicon`) and is **code-signed** under
-the hardened runtime — the build script auto-uses a "Developer ID Application"
-identity from your keychain (override with `SIGN_IDENTITY="…"`), or ad-hoc signs
-if none is found. Entitlements (`scripts/entitlements.plist`) allow the WebKit
-JIT and loading the homebrew libraw dylib.
-
-To **notarize** for distribution (first-launch without a Gatekeeper warning),
-store credentials once and pass the profile name:
-
-```bash
-xcrun notarytool store-credentials freeccr \
-  --apple-id you@example.com --team-id 95YB4MZ4F9 --password <app-specific-pw>
-NOTARY_PROFILE=freeccr make app     # signs, submits, staples
-```
-
-Without notarization the signed app still runs locally (right-click → **Open**
-the first time, since Gatekeeper flags an unnotarized Developer ID build).
-
-### Web UI (browser)
-
-```bash
-make serve                    # build (with RAW) + launch
-# → open http://127.0.0.1:8422, type a roll folder, Load Roll
-```
-
-Load a folder, click a thumbnail, hit **Set Black Pt** and click the clear film
-base, optionally **Set White Pt** on a dense area, tune the sliders (live
-preview), **Sync to All**, then **Export All**. `freeccrd -dir <folder>` loads a
-roll at startup; `-addr` changes the listen address.
-
-`--black`/`--white` are `R,G,B` scan values sampled from the negative (clear film
-base = HIGH values, dense/exposed area = LOW values). See `bin/freeccr convert`
-with no args for all options.
+A 24-frame roll (density convert + adjustments) exports to JPEG at ≈32 frames/s
+end-to-end.
 
 ## Architecture
 
 ```
-cmd/freeccr        CLI: convert one file / batch a folder / decode
-cmd/freeccrd       local web server over the shared UI handler
-cmd/freeccr-app    native desktop app (Wails webview + menu + dialogs)
-internal/ui        embedded SPA + JSON/binary API as one http.Handler (shared)
-internal/auto      auto-WB (4 algorithms), auto-exposure, WB-picker
-internal/geometry  90° rotate, flips, fine straighten, crop
-internal/image     flat float32 interleaved-RGB buffer + sync.Pool
-internal/par       goroutine row-tiling; per-frame vs per-row parallelism switch
+cmd/freeccr        CLI: convert / batch / decode
+cmd/freeccrd       local web server (thin wrapper over internal/ui)
+cmd/freeccr-app    native desktop app (Wails webview + menu + native dialogs)
+internal/ui        embedded SPA + JSON/binary API as one shared http.Handler
 internal/convert   negative→positive kernels (bwpoint, reference, look, window)
-internal/adjust    fused adjust_image slider chain + composed LUTs
-internal/decode    TIFF/JPEG/PNG → RGB float32; RAW via cgo+libraw (-tags libraw); resize
-internal/export    16-bit TIFF + 8-bit JPEG + linear DNG writers
+internal/adjust    fused adjust_image chain + curves/gamma/bands/cineon + LUTs
+internal/auto      auto-WB (4 algorithms), auto-exposure, WB eyedropper
+internal/geometry  90° rotate, flips, fine straighten, crop
+internal/decode    TIFF/JPEG/PNG + RAW via cgo/libraw (-tags libraw); resize
+internal/export    16-bit TIFF, 8-bit JPEG, linear DNG
 internal/pipeline  batch decode→process→encode workers; shared roll Spec
-internal/session   in-memory roll state + cached previews (web UI)
-ref/gen_golden.py  numpy reference → golden fixtures
+internal/image     flat float32 interleaved-RGB buffer + sync.Pool
 ```
-
-### Performance design
-- **Fused pass**: the whole adjustment chain (and the reference-mode
-  normalize+invert+look) runs as a single per-pixel pass — one buffer read +
-  write instead of numpy's ~10 full-array passes.
-- **Composed LUTs**: the pure per-channel scalar stages (white balance, exposure,
-  brightness, highlights/shadows, black/white point, contrast) fold into three
-  65536-entry LUTs built once per roll — per-pixel `pow`/divides become a table
-  lookup. Bit-identical to the per-pixel chain.
-- **Two modes of parallelism**: single images tile rows across `GOMAXPROCS`
-  (low latency); batch runs kernels single-threaded and parallelizes across
-  frames (`internal/pipeline`, decode→process→encode workers with `sync.Pool`
-  buffer reuse) — no GIL, no oversubscription.
-
-### Benchmarks
-
-Compute core, 2000×1333 (2.67 MP), this 14-core Mac. numpy is the exact
-FreeCCR reference math (`ref/bench_np.py`), SIMD-vectorized, ~1 core:
-
-| Operation | numpy (1 core) | Go (14 core) | speedup |
-|-----------|---------------:|-------------:|--------:|
-| adjust_image (full chain) | 304 ms | **41 ms** | 7.4× |
-| two-point density invert  | 23.5 ms | **15 ms** | 1.6× |
-| reference normalize+look  | 113 ms | **37 ms** | 3.1× |
-
-Batch: a 24-frame roll (2.67 MP, density convert + 5 adjustments) → JPEG in
-~0.74 s (≈32 frames/s) end-to-end incl. decode/encode. Reproduce with
-`make golden && (cd ref && python3 bench_np.py)` and
-`go test -bench . ./internal/adjust ./internal/convert`.
 
 ## License
 
-The upstream FreeCCR is AGPL-3.0; this port inherits those terms.
+FreeCCR-go is a derivative work of FreeCCR and is licensed under **AGPL-3.0** — see
+[`LICENSE`](LICENSE) and [`NOTICE`](NOTICE).
