@@ -60,6 +60,9 @@ func specFlags(fs *flag.FlagSet) func() (pipeline.Spec, error) {
 	blackpoint := fs.Float64("blackpoint", 0, "black point (-100..100)")
 	whitepoint := fs.Float64("whitepoint", 0, "white point (-100..100)")
 	subSat := fs.Float64("subsat", 0, "subtractive saturation (-100..100)")
+	gamma := fs.Float64("gamma", 0, "gamma tone curve (-100..100)")
+	gammaLum := fs.Bool("gamma-lum", false, "apply gamma to luminance (hue-preserving)")
+	cineon := fs.Bool("cineon", false, "Cineon log → Rec.709 final transform")
 
 	return func() (pipeline.Spec, error) {
 		s := pipeline.Spec{WS: !*noWS}
@@ -69,6 +72,7 @@ func specFlags(fs *flag.FlagSet) func() (pipeline.Spec, error) {
 		p.Highlights, p.Shadows = *highlights, *shadows
 		p.Blackpoint, p.Whitepoint, p.SubSaturation = *blackpoint, *whitepoint, *subSat
 		s.Adjust = p
+		s.Gamma, s.GammaLuminance, s.Cineon = *gamma, *gammaLum, *cineon
 
 		switch *mode {
 		case "bwpoint":

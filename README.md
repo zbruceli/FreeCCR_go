@@ -17,8 +17,8 @@ planned).
 | 3 | Batch pipeline + benchmarks + LUT optimization | ✅ done |
 | 4 | Local web UI (`freeccrd`) | ✅ done |
 
-**Deferred** (additive on top of the core): color-band HSV vectors, curves,
-gamma, dust removal / AI detect, IT8/DCP/ICC profiling, crop/straighten, Metal GPU.
+**Deferred** (additive on top of the core): dust removal / AI detect,
+IT8/DCP/ICC profiling, crop/straighten, Metal GPU.
 
 ## Fidelity
 
@@ -27,9 +27,14 @@ transliterates the exact numpy kernels from `ccr_processor.py` and emits fixture
 Go tests assert a ≤1-LSB match (most cases bit-exact). Run:
 
 ```bash
-python3 ref/gen_golden.py     # regenerate fixtures (needs numpy)
-go test ./...                 # 22/29 adjust cases bit-exact, rest ≤1 LSB
+python3 ref/gen_golden.py             # convert/adjust/curves/gamma fixtures (numpy)
+python ref/gen_bands.py <FreeCCR/src> # color-band fixtures (needs the cv2 venv)
+go test ./...                         # most cases bit-exact, rest ≤1–2 LSB
 ```
+
+Curves, gamma, and cineon are pure-numpy LUTs (bit-exact / ≤1 LSB). Color bands
+replicate OpenCV's float HSV conversion (FLT_EPSILON + sector table) and are
+validated ≤1 LSB against the **real cv2** `apply_color_band_adjustments`.
 
 The port reproduces numpy's semantics deliberately: float32 working values,
 `clip→truncate` at uint16 boundaries, RGB channel order (channel 0 = R), and
@@ -53,7 +58,11 @@ visible. See [`ref/AB.md`](ref/AB.md).
 - **Adjustment** (`internal/adjust`) — the full `adjust_image` slider chain fused
   into one row-parallel pass: white balance, exposure, brightness,
   highlights/shadows, black/white point, contrast, saturation, subtractive
-  saturation, per-channel levels.
+  saturation, per-channel levels. Plus the "look" stages: **monotone-cubic tone
+  curves** (per-channel + composite), the **gamma** slider (per-channel +
+  hue-preserving luminance mode), **7-band color vectors** (HSV hue/sat/bright/
+  subsat with OpenCV-faithful HSV conversion and spatial feather), and the
+  **Cineon→Rec.709** transform.
 - **Local web UI** (`cmd/freeccrd`) — a Go `net/http` server with an embedded
   single-page app: load a roll → thumbnail strip, click the preview to sample
   the film-base (black) and dense (white) anchors, live convert + adjust with

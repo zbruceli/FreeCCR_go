@@ -330,6 +330,149 @@ def adjust_image(img16, ws_windowed=False, **kw):
     return img.astype(np.uint16)
 
 
+# --- Curves / Gamma / Cineon (pure numpy, transliterated) -------------------
+_IDENTITY_POINTS = [[0.0, 0.0], [255.0, 255.0]]
+_CURVE_CHANNELS = ("rgb", "r", "g", "b")
+
+
+def _normalize_points(points):
+    if not points:
+        return None
+    cleaned = []
+    for p in points:
+        x = float(p[0]); y = float(p[1])
+        if not (np.isfinite(x) and np.isfinite(y)):
+            continue
+        cleaned.append([min(255.0, max(0.0, x)), min(255.0, max(0.0, y))])
+    if len(cleaned) < 2:
+        return None
+    cleaned.sort(key=lambda q: q[0])
+    dedup = [cleaned[0]]
+    for q in cleaned[1:]:
+        if q[0] > dedup[-1][0]:
+            dedup.append(q)
+    if len(dedup) < 2:
+        return None
+    if dedup == _IDENTITY_POINTS:
+        return None
+    return dedup
+
+
+def _monotone_cubic(xs, ys, xq):
+    xs = np.asarray(xs, dtype=np.float64); ys = np.asarray(ys, dtype=np.float64)
+    n = len(xs)
+    if n == 2:
+        return np.interp(xq, xs, ys)
+    h = np.diff(xs); delta = np.diff(ys) / h
+    m = np.empty(n, dtype=np.float64)
+    m[1:-1] = (delta[:-1] + delta[1:]) / 2.0
+    m[0] = delta[0]; m[-1] = delta[-1]
+    for i in range(n - 1):
+        if delta[i] == 0.0:
+            m[i] = 0.0; m[i + 1] = 0.0
+        else:
+            a = m[i] / delta[i]; b = m[i + 1] / delta[i]; s = a * a + b * b
+            if s > 9.0:
+                t = 3.0 / np.sqrt(s)
+                m[i] = t * a * delta[i]; m[i + 1] = t * b * delta[i]
+    xq = np.asarray(xq, dtype=np.float64)
+    idx = np.clip(np.searchsorted(xs, xq) - 1, 0, n - 2)
+    x0 = xs[idx]; x1 = xs[idx + 1]; y0 = ys[idx]; y1 = ys[idx + 1]
+    m0 = m[idx]; m1 = m[idx + 1]
+    hh = (x1 - x0); t = (xq - x0) / hh; t2 = t * t; t3 = t2 * t
+    h00 = 2 * t3 - 3 * t2 + 1; h10 = t3 - 2 * t2 + t
+    h01 = -2 * t3 + 3 * t2; h11 = t3 - t2
+    return h00 * y0 + h10 * hh * m0 + h01 * y1 + h11 * hh * m1
+
+
+def build_channel_lut(points):
+    pts = _normalize_points(points)
+    x = np.arange(256, dtype=np.float64)
+    if pts is None:
+        return x.astype(np.float32)
+    xs = [p[0] for p in pts]; ys = [p[1] for p in pts]
+    return np.clip(_monotone_cubic(xs, ys, x), 0.0, 255.0).astype(np.float32)
+
+
+_LUT16_SAMPLE = np.arange(65536, dtype=np.float32)
+_LUT16_SRC_IDX = np.arange(256, dtype=np.float32) * (65535.0 / 255.0)
+
+
+def _expand_curve256_to_lut16(curve256):
+    return np.interp(_LUT16_SAMPLE, _LUT16_SRC_IDX,
+                     curve256 * (65535.0 / 255.0)).astype(np.uint16)
+
+
+def _is_identity_curves(curves):
+    if not curves:
+        return True
+    for ch in _CURVE_CHANNELS:
+        if _normalize_points(curves.get(ch)) is not None:
+            return False
+    return True
+
+
+def apply_curves(img16, curves):
+    if _is_identity_curves(curves):
+        return img16
+    rgb_lut = build_channel_lut(curves.get("rgb"))
+    rgb_idx = np.clip(np.rint(rgb_lut), 0, 255).astype(np.intp)
+    out = np.empty_like(img16)
+    for c, key in enumerate(("r", "g", "b")):
+        ch_lut = build_channel_lut(curves.get(key))
+        lut16 = _expand_curve256_to_lut16(ch_lut[rgb_idx])
+        out[..., c] = lut16[img16[..., c]]
+    return out
+
+
+_GAMMA_MAX_OFFSET = 63.75
+
+
+def gamma_curve_points(gamma):
+    offset = (float(gamma) / 100.0) * _GAMMA_MAX_OFFSET
+    return [[0.0, 0.0], [127.5 - offset, 127.5 + offset], [255.0, 255.0]]
+
+
+def _gamma_lut16(gamma):
+    curve256 = np.rint(build_channel_lut(gamma_curve_points(gamma)))
+    return _expand_curve256_to_lut16(curve256)
+
+
+_GAMMA_LUMA = np.array([0.299, 0.587, 0.114], dtype=np.float32)
+
+
+def _apply_gamma_luminance(img16, gamma):
+    lut16 = _gamma_lut16(gamma)
+    rgbf = img16.astype(np.float32)
+    lum = rgbf @ _GAMMA_LUMA
+    idx = np.clip(np.rint(lum), 0, 65535).astype(np.uint16)
+    lum_out = lut16[idx].astype(np.float32)
+    k = lum_out / np.maximum(lum, 1.0)
+    out = rgbf * k[..., np.newaxis]
+    return np.clip(np.rint(out), 0.0, 65535.0).astype(np.uint16)
+
+
+def apply_gamma_curve(img16, gamma, luminance=False):
+    if not gamma:
+        return img16
+    if luminance:
+        return _apply_gamma_luminance(img16, gamma)
+    return apply_curves(img16, {"rgb": gamma_curve_points(gamma)})
+
+
+def cineon_lut16():
+    code = np.linspace(0.0, 1023.0, 65536, dtype=np.float64)
+    gain = 0.002 / 0.6
+    off = 10.0 ** ((95.0 - 685.0) * gain)
+    lin = (10.0 ** ((code - 685.0) * gain) - off) / (1.0 - off)
+    lin = np.clip(lin, 0.0, 1.0)
+    return np.round(np.power(lin, 1.0 / 2.2) * 65535.0).astype(np.uint16)
+
+
+def apply_cineon(img16):
+    return cineon_lut16()[img16]
+
+
 def rnd(shape, seed, lo=1.0, hi=65535.0):
     rs = np.random.RandomState(seed)
     return (rs.uniform(lo, hi, shape)).astype(np.float32)
@@ -471,6 +614,40 @@ def main():
     with open(adest, "w") as f:
         json.dump(adj, f)
     print(f"wrote {len(adj)} adjust cases → {os.path.normpath(adest)}")
+
+    # --- curves / gamma / cineon cases ----------------------------------
+    cv = []
+    img = rnd((H, W, 3), 900).astype(np.uint16)
+    il = [int(v) for v in img.reshape(-1)]
+
+    def curve_case(kind, curves=None, gamma=0.0, luminance=False):
+        if kind == "curves":
+            out = apply_curves(img, curves)
+        elif kind == "gamma":
+            out = apply_gamma_curve(img, gamma, luminance)
+        else:
+            out = apply_cineon(img)
+        cv.append(dict(kind=kind, w=W, h=H, inp=il,
+                       curves=curves, gamma=gamma, luminance=luminance,
+                       out=out_list(out)))
+
+    # S-curve on the composite, plus a per-channel move.
+    curve_case("curves", {"rgb": [[0, 0], [64, 48], [192, 208], [255, 255]]})
+    curve_case("curves", {"r": [[0, 20], [255, 235]], "b": [[0, 0], [128, 100], [255, 255]]})
+    curve_case("curves", {"rgb": [[0, 0], [128, 160], [255, 255]],
+                          "g": [[0, 0], [96, 80], [255, 255]]})
+    # 5-point wiggle to exercise Fritsch-Carlson monotonicity clamp.
+    curve_case("curves", {"rgb": [[0, 0], [50, 90], [120, 110], [200, 230], [255, 255]]})
+    curve_case("gamma", gamma=50.0)
+    curve_case("gamma", gamma=-50.0)
+    curve_case("gamma", gamma=40.0, luminance=True)
+    curve_case("gamma", gamma=-60.0, luminance=True)
+    curve_case("cineon")
+
+    cvdest = os.path.join(adest_dir, "golden_curves.json")
+    with open(cvdest, "w") as f:
+        json.dump(cv, f)
+    print(f"wrote {len(cv)} curve cases → {os.path.normpath(cvdest)}")
 
 
 if __name__ == "__main__":

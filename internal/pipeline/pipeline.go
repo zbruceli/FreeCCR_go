@@ -41,6 +41,13 @@ type Spec struct {
 	HasRefRect bool
 	WS         bool // working-space windowing
 	Adjust     adjust.Params
+	// Post-slider "look" stages, applied in the app's order:
+	// sliders → bands → gamma → curves → cineon.
+	Bands          *adjust.BandSettings
+	Gamma          float64
+	GammaLuminance bool
+	Curves         *adjust.Curves
+	Cineon         bool
 }
 
 // Process runs the full conversion + adjustment chain on one decoded image and
@@ -70,7 +77,35 @@ func (s *Spec) Process(im *image.Image) *image.Image {
 	}
 	final := adjust.AdjustImage(conv, s.Adjust, ws)
 	image.PutBuf(conv.Pix)
-	return final
+	return s.applyLook(final)
+}
+
+// applyLook runs the post-slider tone stages (gamma → curves → cineon), each
+// producing a new pooled buffer and recycling the previous one. Inactive stages
+// are skipped (no clone).
+func (s *Spec) applyLook(im *image.Image) *image.Image {
+	cur := im
+	if s.Bands != nil && !s.Bands.IsZero() {
+		next := adjust.ApplyColorBands(cur, s.Bands)
+		image.PutBuf(cur.Pix)
+		cur = next
+	}
+	if s.Gamma != 0 {
+		next := adjust.ApplyGamma(cur, s.Gamma, s.GammaLuminance)
+		image.PutBuf(cur.Pix)
+		cur = next
+	}
+	if s.Curves != nil && !s.Curves.IsIdentity() {
+		next := adjust.ApplyCurves(cur, s.Curves)
+		image.PutBuf(cur.Pix)
+		cur = next
+	}
+	if s.Cineon {
+		next := adjust.ApplyCineon(cur)
+		image.PutBuf(cur.Pix)
+		cur = next
+	}
+	return cur
 }
 
 // Job is one input→output unit of batch work.

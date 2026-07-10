@@ -72,17 +72,30 @@ type adjDTO struct {
 	Blackpoint, Whitepoint, SubSat             float64
 }
 
+type curvesDTO struct {
+	RGB [][2]float64 `json:"rgb"`
+	R   [][2]float64 `json:"r"`
+	G   [][2]float64 `json:"g"`
+	B   [][2]float64 `json:"b"`
+}
+
 type specReq struct {
-	ID       int        `json:"id"`
-	Mode     string     `json:"mode"`
-	Black    [3]float64 `json:"black"`
-	White    [3]float64 `json:"white"`
-	HasWhite bool       `json:"hasWhite"`
-	Density  bool       `json:"density"`
-	Ref      [4]float64 `json:"ref"`
-	HasRef   bool       `json:"hasRef"`
-	WS       bool       `json:"ws"`
-	Adj      adjDTO     `json:"adj"`
+	ID       int           `json:"id"`
+	Mode     string        `json:"mode"`
+	Black    [3]float64    `json:"black"`
+	White    [3]float64    `json:"white"`
+	HasWhite bool          `json:"hasWhite"`
+	Density  bool          `json:"density"`
+	Ref      [4]float64    `json:"ref"`
+	HasRef   bool          `json:"hasRef"`
+	WS       bool          `json:"ws"`
+	Adj      adjDTO        `json:"adj"`
+	Gamma    float64       `json:"gamma"`
+	GammaLum bool          `json:"gammaLum"`
+	Cineon   bool          `json:"cineon"`
+	Bands    [7][4]float64 `json:"bands"`
+	Feather  float64       `json:"feather"`
+	Curves   curvesDTO     `json:"curves"`
 }
 
 func (r *specReq) toSpec() pipeline.Spec {
@@ -105,6 +118,17 @@ func (r *specReq) toSpec() pipeline.Spec {
 		sp.HasWhite = r.HasWhite
 		sp.White = r.White
 		sp.Density = r.Density
+	}
+
+	// Look stages.
+	sp.Gamma, sp.GammaLuminance, sp.Cineon = r.Gamma, r.GammaLum, r.Cineon
+	bs := &adjust.BandSettings{Bands: r.Bands, Feather: r.Feather}
+	if !bs.IsZero() {
+		sp.Bands = bs
+	}
+	cv := &adjust.Curves{RGB: r.Curves.RGB, R: r.Curves.R, G: r.Curves.G, B: r.Curves.B}
+	if !cv.IsIdentity() {
+		sp.Curves = cv
 	}
 	return sp
 }

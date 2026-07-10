@@ -107,6 +107,37 @@
     </div>
 
     <div class="sec">
+      <h3>Curves</h3>
+      <div class="seg" id="curveChs" style="margin-bottom:6px">
+        <button class="active" data-ch="rgb" onclick="setCurveCh('rgb')">RGB</button>
+        <button data-ch="r" onclick="setCurveCh('r')">R</button>
+        <button data-ch="g" onclick="setCurveCh('g')">G</button>
+        <button data-ch="b" onclick="setCurveCh('b')">B</button>
+      </div>
+      <canvas id="curve" width="276" height="200"
+              style="width:100%;background:#12141a;border:1px solid var(--line);border-radius:5px;cursor:crosshair"></canvas>
+      <div class="muted">click to add a point · drag to move · double-click to remove</div>
+    </div>
+
+    <div class="sec">
+      <h3>Color Bands</h3>
+      <div class="seg" id="bandSel" style="margin-bottom:6px;flex-wrap:wrap"></div>
+      <div id="bandSliders"></div>
+      <div class="row"><label>Feather</label>
+        <input type="range" min="0" max="100" value="10" id="bandFeather">
+        <span class="val" id="vv-feather">10</span></div>
+    </div>
+
+    <div class="sec">
+      <h3>Tone</h3>
+      <div class="row"><label>Gamma</label>
+        <input type="range" min="-100" max="100" value="0" id="sl-gamma">
+        <span class="val" id="vv-gamma">0</span></div>
+      <label class="ck"><input type="checkbox" id="gammaLum" onchange="onLook()"> gamma → luminance (hue-preserving)</label>
+      <label class="ck"><input type="checkbox" id="cineon" onchange="onLook()"> Cineon log → Rec.709</label>
+    </div>
+
+    <div class="sec">
       <h3>Roll</h3>
       <div class="btns">
         <button onclick="syncAll()">Sync to All</button>
@@ -141,10 +172,16 @@ const SLIDERS = [
 const ADJ_KEYS = SLIDERS.map(s=>s[0]);
 let frames = [], cur = -1, params = {}, sampleMode = null, previewURL = null, refreshTimer = null;
 
+const BANDS = ["red","skin","yellow","green","cyan","blue","purple"];
+const BAND_PARAMS = [["subsat","Sub-Sat"],["sat","Sat"],["bright","Bright"],["hue","Hue"]];
+
 function newParams() {
   const adj = {}; ADJ_KEYS.forEach(k=>adj[k]=0);
   return { mode:"bwpoint", black:[0,0,0], white:[0,0,0], hasWhite:false, density:false,
-           ref:[0,0,1,1], hasRef:false, ws:true, adj };
+           ref:[0,0,1,1], hasRef:false, ws:true, adj,
+           gamma:0, gammaLum:false, cineon:false,
+           bands:BANDS.map(()=>[0,0,0,0]), feather:10,
+           curves:{rgb:[],r:[],g:[],b:[]} };
 }
 function P(){ return params[cur]; }
 
@@ -158,6 +195,97 @@ SLIDERS.forEach(([k,lbl,lo,hi])=>{
     const v=+e.target.value; P().adj[k]=v; document.getElementById("vv-"+k).textContent=v; refresh();
   });
 });
+
+// Gamma + feather sliders (same pattern as adjust sliders).
+document.getElementById("sl-gamma").addEventListener("input",e=>{
+  P().gamma=+e.target.value; document.getElementById("vv-gamma").textContent=e.target.value; refresh();
+});
+document.getElementById("bandFeather").addEventListener("input",e=>{
+  P().feather=+e.target.value; document.getElementById("vv-feather").textContent=e.target.value; refresh();
+});
+function onLook(){
+  P().gammaLum=document.getElementById("gammaLum").checked;
+  P().cineon=document.getElementById("cineon").checked;
+  refresh();
+}
+
+// --- Color bands ---
+let curBand=0;
+(function buildBands(){
+  const sel=document.getElementById("bandSel");
+  BANDS.forEach((name,i)=>{
+    const b=document.createElement("button"); b.textContent=name; b.dataset.i=i;
+    b.style.textTransform="capitalize"; b.onclick=()=>selectBand(i); sel.appendChild(b);
+  });
+  const sc=document.getElementById("bandSliders");
+  BAND_PARAMS.forEach(([key,lbl],pi)=>{
+    const row=document.createElement("div"); row.className="row";
+    row.innerHTML=`<label>${lbl}</label><input type="range" min="-100" max="100" value="0" id="bp-${pi}"><span class="val" id="bv-${pi}">0</span>`;
+    sc.appendChild(row);
+    row.querySelector("input").addEventListener("input",e=>{
+      P().bands[curBand][pi]=+e.target.value; document.getElementById("bv-"+pi).textContent=e.target.value; refresh();
+    });
+  });
+})();
+function selectBand(i){
+  curBand=i;
+  document.querySelectorAll("#bandSel button").forEach(b=>b.classList.toggle("active",+b.dataset.i===i));
+  BAND_PARAMS.forEach(([_k],pi)=>{
+    const v=P().bands[i][pi];
+    document.getElementById("bp-"+pi).value=v; document.getElementById("bv-"+pi).textContent=v;
+  });
+}
+function loadBandsUI(){ selectBand(curBand); }
+
+// --- Curve editor ---
+let curCurveCh="rgb";
+const cvCanvas=document.getElementById("curve"), cvCtx=cvCanvas.getContext("2d");
+const CW=cvCanvas.width, CH=cvCanvas.height, PAD=8;
+let dragPt=-1;
+function setCurveCh(ch){
+  curCurveCh=ch;
+  document.querySelectorAll("#curveChs button").forEach(b=>b.classList.toggle("active",b.dataset.ch===ch));
+  drawCurve();
+}
+function curvePts(){
+  let p=P().curves[curCurveCh];
+  if(!p||p.length<2){ p=[[0,0],[255,255]]; P().curves[curCurveCh]=p; }
+  return p;
+}
+function toCanvas(px,py){ return [PAD+px/255*(CW-2*PAD), CH-PAD-py/255*(CH-2*PAD)]; }
+function fromCanvas(cx,cy){ return [ (cx-PAD)/(CW-2*PAD)*255, (CH-PAD-cy)/(CH-2*PAD)*255 ]; }
+function drawCurve(){
+  const pts=curvePts();
+  cvCtx.clearRect(0,0,CW,CH);
+  cvCtx.strokeStyle="#2a2f3d"; cvCtx.lineWidth=1;
+  for(let i=1;i<4;i++){ const x=PAD+i/4*(CW-2*PAD); cvCtx.beginPath();cvCtx.moveTo(x,PAD);cvCtx.lineTo(x,CH-PAD);cvCtx.stroke();
+    const y=PAD+i/4*(CH-2*PAD); cvCtx.beginPath();cvCtx.moveTo(PAD,y);cvCtx.lineTo(CW-PAD,y);cvCtx.stroke(); }
+  cvCtx.strokeStyle="#3a4a5a"; cvCtx.setLineDash([3,3]);
+  let a=toCanvas(0,0),b=toCanvas(255,255); cvCtx.beginPath();cvCtx.moveTo(a[0],a[1]);cvCtx.lineTo(b[0],b[1]);cvCtx.stroke();
+  cvCtx.setLineDash([]);
+  cvCtx.strokeStyle=curCurveCh==="r"?"#e06c75":curCurveCh==="g"?"#98c379":curCurveCh==="b"?"#61afef":"#56b6c2";
+  cvCtx.lineWidth=2; cvCtx.beginPath();
+  pts.forEach((p,i)=>{ const c=toCanvas(p[0],p[1]); i?cvCtx.lineTo(c[0],c[1]):cvCtx.moveTo(c[0],c[1]); });
+  cvCtx.stroke();
+  cvCtx.fillStyle="#e6e8ee";
+  pts.forEach(p=>{ const c=toCanvas(p[0],p[1]); cvCtx.beginPath();cvCtx.arc(c[0],c[1],4,0,7);cvCtx.fill(); });
+}
+function curveMouse(e){ const r=cvCanvas.getBoundingClientRect();
+  return [ (e.clientX-r.left)*CW/r.width, (e.clientY-r.top)*CH/r.height ]; }
+function nearPt(cx,cy){ const pts=curvePts();
+  for(let i=0;i<pts.length;i++){ const c=toCanvas(pts[i][0],pts[i][1]); if(Math.hypot(c[0]-cx,c[1]-cy)<9) return i; } return -1; }
+cvCanvas.addEventListener("mousedown",e=>{ const[cx,cy]=curveMouse(e); dragPt=nearPt(cx,cy);
+  if(dragPt<0){ const[px,py]=fromCanvas(cx,cy); const pts=curvePts();
+    pts.push([Math.max(0,Math.min(255,px)),Math.max(0,Math.min(255,py))]); pts.sort((a,b)=>a[0]-b[0]);
+    dragPt=pts.findIndex(p=>p[0]===Math.max(0,Math.min(255,px))); drawCurve(); refresh(); } });
+window.addEventListener("mousemove",e=>{ if(dragPt<0)return; const[cx,cy]=curveMouse(e); let[px,py]=fromCanvas(cx,cy);
+  const pts=curvePts(); py=Math.max(0,Math.min(255,py));
+  if(dragPt===0) px=0; else if(dragPt===pts.length-1) px=255;
+  else px=Math.max(pts[dragPt-1][0]+1,Math.min(pts[dragPt+1][0]-1,px));
+  pts[dragPt]=[px,py]; drawCurve(); refresh(); });
+window.addEventListener("mouseup",()=>{ dragPt=-1; });
+cvCanvas.addEventListener("dblclick",e=>{ const[cx,cy]=curveMouse(e); const i=nearPt(cx,cy); const pts=curvePts();
+  if(i>0&&i<pts.length-1){ pts.splice(i,1); drawCurve(); refresh(); } });
 
 async function loadRoll(){
   const dir=document.getElementById("dir").value.trim();
@@ -194,6 +322,12 @@ function loadParamsIntoUI(){
   SLIDERS.forEach(([k])=>{ document.getElementById("sl-"+k).value=p.adj[k]; document.getElementById("vv-"+k).textContent=p.adj[k]; });
   document.getElementById("ws").checked=p.ws;
   document.getElementById("density").checked=p.density;
+  document.getElementById("sl-gamma").value=p.gamma; document.getElementById("vv-gamma").textContent=p.gamma;
+  document.getElementById("gammaLum").checked=p.gammaLum;
+  document.getElementById("cineon").checked=p.cineon;
+  document.getElementById("bandFeather").value=p.feather; document.getElementById("vv-feather").textContent=p.feather;
+  loadBandsUI();
+  drawCurve();
   setModeUI(p.mode);
   updateSwatch("black"); updateSwatch("white"); updateRefChip();
 }
