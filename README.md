@@ -126,9 +126,18 @@ make run-app          # build bin/FreeCCR-go.app and open it
 ```
 
 Needs `brew install libraw` and the Xcode command line tools. **File → Open
-Roll…** uses the native folder picker; ⌘E exports all. (Cross-platform builds are
-possible — Wails targets Windows/Linux too — but only the macOS bundle is wired
-up here.)
+Roll…** uses the native folder picker; ⌘E exports all.
+
+**Windows & Linux.** Wails targets all three, but the webview (WebKitGTK on
+Linux) and libraw don't cross-compile from macOS, so those are built on their own
+OS. A GitHub Actions workflow (`.github/workflows/build.yml`) builds all three on
+native runners (apt / brew / MSYS2 for libraw) and uploads per-platform
+artifacts. A console-free Windows `.exe` (standard formats, no RAW) *can* be
+cross-built from any host:
+
+```bash
+make build-windows      # → bin/FreeCCR.exe (cgo-free; RAW needs the CI/MSYS2 build)
+```
 
 The bundle gets a generated icon (`tools/genicon`) and is **code-signed** under
 the hardened runtime — the build script auto-uses a "Developer ID Application"

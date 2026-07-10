@@ -32,6 +32,12 @@ app:
 run-app: app
 	open $(BIN)/FreeCCR-go.app
 
+## Windows .exe cross-built from any host (cgo-free webview; standard formats,
+## no RAW). RAW-on-Windows needs mingw + libraw — see the CI workflow.
+build-windows:
+	GOOS=windows GOARCH=amd64 CGO_ENABLED=0 \
+	  go build -tags "desktop,production" -ldflags "-H windowsgui" -o $(BIN)/FreeCCR.exe ./cmd/freeccr-app
+
 test:
 	go test ./...
 

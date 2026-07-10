@@ -1,0 +1,80 @@
+# Build the FreeCCR-go desktop app on each native OS runner (Wails needs the
+# platform webview; RAW needs libraw — neither cross-compiles cleanly). Runs on
+# demand and on version tags; uploads a per-platform artifact.
+#
+# NOTE: authored to the standard Wails + msys2 conventions but not yet run in
+# CI — the first run may need small tweaks (especially the Windows/libraw job).
+name: build
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ["v*"]
+
+jobs:
+  linux:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Install deps (WebKitGTK + libraw)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libraw-dev libgtk-3-dev libwebkit2gtk-4.1-dev
+      - name: Build
+        run: |
+          CGO_ENABLED=1 go build -tags "desktop,production,libraw,webkit2_41" \
+            -o FreeCCR-go-linux ./cmd/freeccr-app
+      - uses: actions/upload-artifact@v4
+        with:
+          name: FreeCCR-go-linux
+          path: FreeCCR-go-linux
+
+  macos:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Install libraw
+        run: brew install libraw
+      - name: Build .app (ad-hoc signed; no Developer ID cert in CI)
+        run: make app
+      - name: Zip bundle
+        run: ditto -c -k --keepParent bin/FreeCCR-go.app FreeCCR-go-macos.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: FreeCCR-go-macos
+          path: FreeCCR-go-macos.zip
+
+  windows:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: msys2 {0}
+    steps:
+      - uses: actions/checkout@v4
+      # Go + gcc + libraw from MSYS2/MinGW so cgo can link libraw.
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: true
+          install: >-
+            mingw-w64-x86_64-go
+            mingw-w64-x86_64-gcc
+            mingw-w64-x86_64-pkg-config
+            mingw-w64-x86_64-libraw
+      - name: Build
+        env:
+          CGO_ENABLED: "1"
+          CGO_LDFLAGS_ALLOW: ".*"
+        run: |
+          go build -tags "desktop,production,libraw" -ldflags "-H windowsgui" \
+            -o FreeCCR-go.exe ./cmd/freeccr-app
+      - uses: actions/upload-artifact@v4
+        with:
+          name: FreeCCR-go-windows
+          path: FreeCCR-go.exe
