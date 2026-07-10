@@ -113,8 +113,8 @@ func runConvert(args []string) {
 	}
 	input := args[0]
 	fs := flag.NewFlagSet("convert", flag.ExitOnError)
-	out := fs.String("o", "", "output path (.tif or .jpg); required")
-	jpg := fs.Bool("jpg", false, "write 8-bit JPEG instead of 16-bit TIFF")
+	out := fs.String("o", "", "output path (.tif / .jpg / .dng); required — format from extension")
+	jpg := fs.Bool("jpg", false, "force 8-bit JPEG output")
 	quality := fs.Int("quality", 95, "JPEG quality (1-100)")
 	build := specFlags(fs)
 	_ = fs.Parse(args[1:])
@@ -126,6 +126,10 @@ func runConvert(args []string) {
 	if err != nil {
 		fatalf("%v", err)
 	}
+	format := formatFromExt(*out)
+	if *jpg {
+		format = "jpg"
+	}
 
 	start := time.Now()
 	im, err := decode.Decode(input, false)
@@ -135,12 +139,7 @@ func runConvert(args []string) {
 	tDecode := time.Now()
 	final := spec.Process(im)
 	tProc := time.Now()
-	if *jpg {
-		err = export.WriteJPEG(*out, final, *quality)
-	} else {
-		err = export.WriteTIFF16(*out, final)
-	}
-	if err != nil {
+	if err = export.Write(*out, final, format, *quality); err != nil {
 		fatalf("write %s: %v", *out, err)
 	}
 	tWrite := time.Now()
@@ -157,7 +156,8 @@ func runBatch(args []string) {
 	inDir := args[0]
 	fs := flag.NewFlagSet("batch", flag.ExitOnError)
 	outDir := fs.String("o", "", "output directory; required")
-	jpg := fs.Bool("jpg", false, "write 8-bit JPEG instead of 16-bit TIFF")
+	format := fs.String("format", "tif", "output format: tif | jpg | dng")
+	jpg := fs.Bool("jpg", false, "alias for --format jpg")
 	quality := fs.Int("quality", 95, "JPEG quality (1-100)")
 	preview := fs.Bool("preview", false, "decode RAW at half size")
 	decW := fs.Int("decode-workers", 0, "concurrent decoders (0=auto)")
@@ -176,11 +176,11 @@ func runBatch(args []string) {
 		fatalf("mkdir %s: %v", *outDir, err)
 	}
 
-	ext := ".tif"
+	fmtStr := *format
 	if *jpg {
-		ext = ".jpg"
+		fmtStr = "jpg"
 	}
-	jobs, err := buildJobs(inDir, *outDir, ext, *jpg, *quality)
+	jobs, err := buildJobs(inDir, *outDir, fmtStr, *quality)
 	if err != nil {
 		fatalf("%v", err)
 	}
@@ -213,11 +213,12 @@ func runBatch(args []string) {
 	}
 }
 
-func buildJobs(inDir, outDir, ext string, jpg bool, quality int) ([]pipeline.Job, error) {
+func buildJobs(inDir, outDir, format string, quality int) ([]pipeline.Job, error) {
 	entries, err := os.ReadDir(inDir)
 	if err != nil {
 		return nil, err
 	}
+	ext := export.Ext(format)
 	var jobs []pipeline.Job
 	for _, e := range entries {
 		if e.IsDir() {
@@ -231,11 +232,23 @@ func buildJobs(inDir, outDir, ext string, jpg bool, quality int) ([]pipeline.Job
 		jobs = append(jobs, pipeline.Job{
 			Input:   filepath.Join(inDir, name),
 			Output:  filepath.Join(outDir, base+ext),
-			JPEG:    jpg,
+			Format:  format,
 			Quality: quality,
 		})
 	}
 	return jobs, nil
+}
+
+// formatFromExt infers the export format from an output path's extension.
+func formatFromExt(path string) string {
+	switch strings.ToLower(filepath.Ext(path)) {
+	case ".jpg", ".jpeg":
+		return "jpg"
+	case ".dng":
+		return "dng"
+	default:
+		return "tif"
+	}
 }
 
 // runDecode decodes a file (RAW or standard) and writes it verbatim as a 16-bit
@@ -313,8 +326,9 @@ Modes (convert / batch):
      --ref x0,y0,x1,y1   reference rectangle, normalized 0..1
 
 Output:
-  -o <path/dir>    .tif (16-bit) or .jpg; a directory for batch
-  --jpg            write JPEG; --quality N (1-100)
+  -o <path/dir>    convert: .tif / .jpg / .dng (format from extension)
+                   batch: a directory (use --format tif|jpg|dng)
+  --jpg            force JPEG;  --quality N (1-100)
   --no-ws          disable working-space windowing
 
 Batch:

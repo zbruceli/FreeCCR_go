@@ -325,7 +325,7 @@ func (s *server) handleSample(w http.ResponseWriter, r *http.Request) {
 func (s *server) handleExport(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		OutDir  string    `json:"outDir"`
-		JPEG    bool      `json:"jpg"`
+		Format  string    `json:"format"` // "tif" | "jpg" | "dng"
 		Quality int       `json:"quality"`
 		Frames  []specReq `json:"frames"`
 	}
@@ -343,10 +343,10 @@ func (s *server) handleExport(w http.ResponseWriter, r *http.Request) {
 	if req.Quality == 0 {
 		req.Quality = 95
 	}
-	ext := ".tif"
-	if req.JPEG {
-		ext = ".jpg"
+	if req.Format == "" {
+		req.Format = "tif"
 	}
+	ext := export.Ext(req.Format)
 
 	// Full-res decode + process per frame, parallel across frames (kernels
 	// single-threaded, like the batch pipeline).
@@ -376,11 +376,7 @@ func (s *server) handleExport(w http.ResponseWriter, r *http.Request) {
 				final := sp.Process(im)
 				image.PutBuf(im.Pix)
 				out := filepath.Join(req.OutDir, session.TrimExt(name)+ext)
-				if req.JPEG {
-					err = export.WriteJPEG(out, final, req.Quality)
-				} else {
-					err = export.WriteTIFF16(out, final)
-				}
+				err = export.Write(out, final, req.Format, req.Quality)
 				image.PutBuf(final.Pix)
 			}
 			mu.Lock()

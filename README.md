@@ -71,8 +71,9 @@ visible. See [`ref/AB.md`](ref/AB.md).
 - **I/O** — TIFF/JPEG/PNG decode (`internal/decode`), plus **RAW** (CR2/CR3/NEF/
   ARW/DNG/…) via cgo + libraw, matching FreeCCR's rawpy decode (AHD, 16-bit,
   linear, no auto-bright, Adobe RGB, auto-scaled). Verified **bit-exact** against
-  libraw's own `dcraw_emu` (maxAbsDiff=0 over a 40MP frame). 16-bit TIFF + 8-bit
-  JPEG export (`internal/export`).
+  libraw's own `dcraw_emu` (maxAbsDiff=0 over a 40MP frame). Export as 16-bit
+  TIFF, 8-bit JPEG, or **linear DNG** (`internal/export`; the DNG imports the
+  converted positive into raw editors).
 
 ## Build & run
 
@@ -102,8 +103,11 @@ bin/freeccr convert scan.tif -o positive.jpg --jpg \
 # RAW input (with a libraw build) works identically:
 bin/freeccr convert scan.cr3 -o positive.tif --black 61000,58000,52000
 
+# Export as linear DNG (imports into Lightroom / Camera Raw / RawTherapee):
+bin/freeccr convert scan.tif -o positive.dng --black 61000,58000,52000
+
 # Whole roll → one output folder, shared settings, all cores:
-bin/freeccr batch ./roll -o ./out --jpg \
+bin/freeccr batch ./roll -o ./out --format dng \
     --black 61000,58000,52000 --white 9150,8700,7800 --density --contrast 20
 
 # Passthrough decode (no conversion) — writes the decoded 16-bit TIFF:
@@ -136,7 +140,7 @@ internal/par       goroutine row-tiling; per-frame vs per-row parallelism switch
 internal/convert   negative→positive kernels (bwpoint, reference, look, window)
 internal/adjust    fused adjust_image slider chain + composed LUTs
 internal/decode    TIFF/JPEG/PNG → RGB float32; RAW via cgo+libraw (-tags libraw); resize
-internal/export    16-bit TIFF + 8-bit JPEG writers
+internal/export    16-bit TIFF + 8-bit JPEG + linear DNG writers
 internal/pipeline  batch decode→process→encode workers; shared roll Spec
 internal/session   in-memory roll state + cached previews (web UI)
 ref/gen_golden.py  numpy reference → golden fixtures

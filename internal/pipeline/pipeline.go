@@ -112,8 +112,8 @@ func (s *Spec) applyLook(im *image.Image) *image.Image {
 type Job struct {
 	Input   string
 	Output  string
-	JPEG    bool
-	Quality int
+	Format  string // "tif" (16-bit), "jpg" (8-bit), or "dng" (linear)
+	Quality int    // JPEG quality
 }
 
 // Result reports the outcome of a Job.
@@ -198,11 +198,7 @@ func RunBatch(jobs []Job, spec Spec, opt Options, progress func(done, total int,
 				final := s.Process(d.im)
 				image.PutBuf(d.im.Pix) // decoded buffer no longer needed
 				res.W, res.H = final.W, final.H
-				if d.job.JPEG {
-					res.Err = export.WriteJPEG(d.job.Output, final, d.job.Quality)
-				} else {
-					res.Err = export.WriteTIFF16(d.job.Output, final)
-				}
+				res.Err = export.Write(d.job.Output, final, d.job.Format, d.job.Quality)
 				image.PutBuf(final.Pix)
 				resCh <- res
 			}

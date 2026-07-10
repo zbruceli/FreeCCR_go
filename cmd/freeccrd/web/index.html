@@ -177,7 +177,12 @@
       <h3>Export</h3>
       <div class="row"><input type="text" id="outDir" placeholder="output folder" style="flex:1"></div>
       <div class="row">
-        <label class="ck"><input type="checkbox" id="jpg" checked> JPEG</label>
+        <label class="ck">Format
+          <select id="format" style="background:var(--panel2);border:1px solid var(--line);color:var(--txt);border-radius:5px;padding:4px">
+            <option value="jpg">JPEG · 8-bit</option>
+            <option value="tif">TIFF · 16-bit</option>
+            <option value="dng">DNG · linear</option>
+          </select></label>
         <label class="ck">q<input type="number" id="quality" value="95" min="1" max="100" style="width:56px"></label>
       </div>
       <div class="btns">
@@ -503,7 +508,7 @@ function resetAdj(){ ADJ_KEYS.forEach(k=>P().adj[k]=0); loadParamsIntoUI(); refr
 async function exportRoll(all){
   const list = all? frames.map(f=>f.id) : [cur];
   const payload = { outDir:document.getElementById("outDir").value.trim(),
-    jpg:document.getElementById("jpg").checked, quality:+document.getElementById("quality").value,
+    format:document.getElementById("format").value, quality:+document.getElementById("quality").value,
     frames: list.map(id=>Object.assign({id},params[id])) };
   document.getElementById("exportMsg").textContent="exporting…";
   const r=await fetch("/api/export",{method:"POST",headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
