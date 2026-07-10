@@ -6,24 +6,29 @@
 <title>FreeCCR-go</title>
 <style>
   :root {
-    --bg: #16181d; --panel: #1e2128; --panel2: #262a33; --line: #33384a;
-    --txt: #e6e8ee; --dim: #9aa0b0; --accent: #56b6c2; --accent2:#c678dd;
-    --warn:#e5c07b;
+    /* FreeCCR neutral-dark design tokens (spec/visual-redesign.md) — zero-hue
+       so the UI never biases perception of image color. */
+    --bg: #1e1e1e; --canvas:#1a1a1a; --panel: #2a2a2a; --panel2: #333333;
+    --surface-active:#454545; --line: #3c3c3c; --line-strong:#5a5a5a;
+    --txt: #e0e0e0; --dim: #9a9a9a; --accent: #6e6e6e; --accent2:#7a7a7a;
+    --warn:#e0c060;
+    --chr:#d06666; --chg:#66aa66; --chb:#6688d0;
   }
   * { box-sizing: border-box; }
   body { margin:0; font:13px/1.4 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
          background:var(--bg); color:var(--txt); height:100vh; overflow:hidden; }
   header { display:flex; gap:8px; align-items:center; padding:8px 12px;
            background:var(--panel); border-bottom:1px solid var(--line); }
-  header h1 { font-size:14px; margin:0 12px 0 0; letter-spacing:.5px; color:var(--accent); }
+  header h1 { font-size:14px; margin:0 12px 0 0; letter-spacing:.5px; color:var(--txt); }
   input[type=text], input[type=number] { background:var(--panel2); border:1px solid var(--line);
            color:var(--txt); border-radius:5px; padding:5px 8px; }
   #dir { flex:1; min-width:200px; }
   button { background:var(--panel2); color:var(--txt); border:1px solid var(--line);
            border-radius:5px; padding:5px 11px; cursor:pointer; }
-  button:hover { border-color:var(--accent); }
-  button.primary { background:var(--accent); color:#0c1013; border-color:var(--accent); font-weight:600; }
-  button.active { background:var(--accent2); color:#0c1013; border-color:var(--accent2); }
+  button:hover { border-color:var(--line-strong); background:#3c3c3c; }
+  button.primary { background:var(--surface-active); color:var(--txt); border-color:var(--line-strong); font-weight:600; }
+  button.primary:hover { background:#505050; }
+  button.active { background:var(--surface-active); color:#fff; border-color:var(--accent); }
   #status { color:var(--dim); margin-left:auto; }
   main { display:grid; grid-template-columns: 150px 1fr 300px; height:calc(100vh - 49px); }
   #thumbs { overflow-y:auto; background:var(--panel); border-right:1px solid var(--line); padding:6px; }
@@ -34,8 +39,20 @@
   .thumb .nm { position:absolute; bottom:0; left:0; right:0; font-size:10px; padding:2px 4px;
                background:rgba(0,0,0,.6); color:var(--dim); white-space:nowrap; overflow:hidden;
                text-overflow:ellipsis; }
-  #stage { display:flex; align-items:center; justify-content:center; background:#0d0f13;
+  #center { display:flex; flex-direction:column; min-width:0; }
+  #stage { flex:1; display:flex; align-items:center; justify-content:center; background:var(--canvas);
            position:relative; overflow:hidden; }
+  #scopes { border-top:1px solid var(--line); background:var(--bg); }
+  #scopes .sc-hd { padding:5px 12px; font-size:11px; text-transform:uppercase; letter-spacing:.6px;
+                   color:var(--dim); cursor:pointer; display:flex; align-items:center; }
+  #scopes .sc-hd #sc-caret { transition:transform .1s; display:inline-block; }
+  #scopes:not(.collapsed) .sc-hd #sc-caret { transform:rotate(90deg); }
+  #scopes .sc-probe { margin-left:auto; font-family:ui-monospace,Menlo,monospace; font-size:11px;
+                      color:var(--txt); }
+  #scopes .sc-body { display:flex; gap:8px; padding:0 12px 10px; height:212px; }
+  #scopes.collapsed .sc-body { display:none; }
+  #scopes canvas { background:#151515; border:1px solid var(--line); border-radius:4px; height:200px; }
+  #parade { width:540px; } #vector { width:200px; }
   #preview { max-width:100%; max-height:100%; object-fit:contain; }
   #stage.sampling { cursor:crosshair; }
   #empty { text-align:center; color:var(--dim); user-select:none; padding:24px; }
@@ -63,6 +80,17 @@
   .seg button:last-child { border-right:0; }
   label.ck { display:flex; align-items:center; gap:6px; color:var(--dim); cursor:pointer; }
   .muted { color:var(--dim); font-size:11px; }
+  h3.collap { cursor:pointer; display:flex; align-items:center; }
+  h3.collap .caret { margin-left:auto; font-size:10px; color:var(--dim); transition:transform .1s; }
+  h3.collap.open .caret { transform:rotate(90deg); }
+  .grp { font-size:10px; text-transform:uppercase; letter-spacing:.6px; margin:8px 0 3px; }
+  .grp.r { color:var(--chr); } .grp.g { color:var(--chg); } .grp.b { color:var(--chb); }
+  .grp.m { color:var(--dim); }
+  #analysis { margin-bottom:12px; }
+  #hist { width:100%; height:88px; display:block; background:#2a2a2a; border:1px solid var(--line);
+          border-radius:5px; }
+  #probe { margin-top:4px; font-variant-numeric:tabular-nums; font-family:ui-monospace,Menlo,monospace;
+           font-size:11px; }
   /* folder picker */
   #browseModal { display:none; position:fixed; inset:0; background:rgba(0,0,0,.55);
                  z-index:100; align-items:center; justify-content:center; }
@@ -91,6 +119,7 @@
 </header>
 <main>
   <div id="thumbs"></div>
+  <div id="center">
   <div id="stage">
     <img id="preview" alt="" style="display:none">
     <div id="empty">
@@ -101,7 +130,20 @@
     </div>
     <div id="hint"></div>
   </div>
+  <div id="scopes" class="collapsed">
+    <div class="sc-hd" onclick="toggleScopes()"><span id="sc-caret">▸</span>&nbsp;Scopes
+      <span class="sc-probe" id="sc-probe"></span></div>
+    <div class="sc-body">
+      <canvas id="parade" width="540" height="200"></canvas>
+      <canvas id="vector" width="200" height="200"></canvas>
+    </div>
+  </div>
+  </div>
   <div id="panel">
+    <div id="analysis">
+      <canvas id="hist" width="276" height="88"></canvas>
+      <div id="probe" class="muted">move over the image to read values</div>
+    </div>
     <div class="sec">
       <h3>Conversion</h3>
       <div class="seg" style="margin-bottom:8px">
@@ -143,7 +185,7 @@
         <button data-ch="b" onclick="setCurveCh('b')">B</button>
       </div>
       <canvas id="curve" width="276" height="200"
-              style="width:100%;background:#12141a;border:1px solid var(--line);border-radius:5px;cursor:crosshair"></canvas>
+              style="width:100%;background:#232323;border:1px solid var(--line);border-radius:5px;cursor:crosshair"></canvas>
       <div class="muted">click to add a point · drag to move · double-click to remove</div>
     </div>
 
@@ -163,6 +205,11 @@
         <span class="val" id="vv-gamma">0</span></div>
       <label class="ck"><input type="checkbox" id="gammaLum" onchange="onLook()"> gamma → luminance (hue-preserving)</label>
       <label class="ck"><input type="checkbox" id="cineon" onchange="onLook()"> Cineon log → Rec.709</label>
+    </div>
+
+    <div class="sec">
+      <h3 class="collap" onclick="toggleSec('chlev')">Channel Levels <span class="caret" id="car-chlev">▸</span></h3>
+      <div id="chlev" style="display:none"></div>
     </div>
 
     <div class="sec">
@@ -218,7 +265,20 @@ const SLIDERS = [
   ["highlights","Highlights",-100,100],["shadows","Shadows",-100,100],
   ["blackpoint","Black Pt",-100,100],["whitepoint","White Pt",-100,100],
 ];
-const ADJ_KEYS = SLIDERS.map(s=>s[0]);
+const CHANNEL_LEVELS = [
+  ["m","Master",  [["chInputGain","Input Gain"],["chMasterShift","Master Shift"],["chMasterGain","Master Gain"]]],
+  ["r","R Channel",[["chRShift","R Shift"],["chRGain","R Gain"],["chRBlackpoint","R Black Pt"]]],
+  ["g","G Channel",[["chGShift","G Shift"],["chGGain","G Gain"],["chGBlackpoint","G Black Pt"]]],
+  ["b","B Channel",[["chBShift","B Shift"],["chBGain","B Gain"],["chBBlackpoint","B Black Pt"]]],
+];
+const CH_KEYS = CHANNEL_LEVELS.flatMap(g=>g[2].map(x=>x[0]));
+const ADJ_KEYS = SLIDERS.map(s=>s[0]).concat(CH_KEYS);
+function toggleSec(id){
+  const b=document.getElementById(id);
+  const open=b.style.display==="none";
+  b.style.display=open?"block":"none";
+  document.getElementById("car-"+id).parentElement.classList.toggle("open",open);
+}
 let frames = [], cur = -1, params = {}, sampleMode = null, previewURL = null, refreshTimer = null;
 
 const BANDS = ["red","skin","yellow","green","cyan","blue","purple"];
@@ -244,6 +304,22 @@ SLIDERS.forEach(([k,lbl,lo,hi])=>{
     const v=+e.target.value; P().adj[k]=v; document.getElementById("vv-"+k).textContent=v; refresh();
   });
 });
+
+// Channel Levels sliders (grouped Master/R/G/B).
+(function buildChannelLevels(){
+  const c=document.getElementById("chlev");
+  CHANNEL_LEVELS.forEach(([cls,title,items])=>{
+    const h=document.createElement("div"); h.className="grp "+cls; h.textContent=title; c.appendChild(h);
+    items.forEach(([k,lbl])=>{
+      const row=document.createElement("div"); row.className="row";
+      row.innerHTML=`<label>${lbl}</label><input type="range" min="-100" max="100" value="0" id="sl-${k}"><span class="val" id="vv-${k}">0</span>`;
+      c.appendChild(row);
+      row.querySelector("input").addEventListener("input",e=>{
+        P().adj[k]=+e.target.value; document.getElementById("vv-"+k).textContent=e.target.value; refresh();
+      });
+    });
+  });
+})();
 
 // Gamma + feather sliders (same pattern as adjust sliders).
 document.getElementById("sl-gamma").addEventListener("input",e=>{
@@ -312,7 +388,7 @@ function drawCurve(){
   cvCtx.strokeStyle="#3a4a5a"; cvCtx.setLineDash([3,3]);
   let a=toCanvas(0,0),b=toCanvas(255,255); cvCtx.beginPath();cvCtx.moveTo(a[0],a[1]);cvCtx.lineTo(b[0],b[1]);cvCtx.stroke();
   cvCtx.setLineDash([]);
-  cvCtx.strokeStyle=curCurveCh==="r"?"#e06c75":curCurveCh==="g"?"#98c379":curCurveCh==="b"?"#61afef":"#56b6c2";
+  cvCtx.strokeStyle=curCurveCh==="r"?"#d06666":curCurveCh==="g"?"#66aa66":curCurveCh==="b"?"#6688d0":"#e0e0e0";
   cvCtx.lineWidth=2; cvCtx.beginPath();
   pts.forEach((p,i)=>{ const c=toCanvas(p[0],p[1]); i?cvCtx.lineTo(c[0],c[1]):cvCtx.moveTo(c[0],c[1]); });
   cvCtx.stroke();
@@ -401,7 +477,7 @@ function selectFrame(id){
 
 function loadParamsIntoUI(){
   const p=P();
-  SLIDERS.forEach(([k])=>{ document.getElementById("sl-"+k).value=p.adj[k]; document.getElementById("vv-"+k).textContent=p.adj[k]; });
+  ADJ_KEYS.forEach(k=>{ const el=document.getElementById("sl-"+k); if(el){ el.value=p.adj[k]; document.getElementById("vv-"+k).textContent=p.adj[k]; } });
   document.getElementById("ws").checked=p.ws;
   document.getElementById("density").checked=p.density;
   document.getElementById("sl-gamma").value=p.gamma; document.getElementById("vv-gamma").textContent=p.gamma;
@@ -466,6 +542,126 @@ function norm(e){
   return { x:Math.min(1,Math.max(0,(e.clientX-rect.left)/rect.width)),
            y:Math.min(1,Math.max(0,(e.clientY-rect.top)/rect.height)) };
 }
+
+// --- Histogram + hover probe (client-side, from the displayed preview) ---
+const _off=document.createElement("canvas");
+const _offctx=_off.getContext("2d",{willReadFrequently:true});
+let _offImg=null;
+const histCanvas=document.getElementById("hist"), histCtx=histCanvas.getContext("2d");
+function updateAnalysis(){
+  const iw=preview.naturalWidth, ih=preview.naturalHeight;
+  if(!iw||!ih) return;
+  const sc=Math.min(1, 480/iw), w=Math.max(1,Math.round(iw*sc)), h=Math.max(1,Math.round(ih*sc));
+  _off.width=w; _off.height=h; _offctx.drawImage(preview,0,0,w,h);
+  _offImg=_offctx.getImageData(0,0,w,h);
+  drawHistogram(_offImg.data);
+  if(typeof updateScopes==="function") updateScopes(_offImg);
+}
+function drawHistogram(data){
+  const R=new Float64Array(256),G=new Float64Array(256),B=new Float64Array(256);
+  for(let i=0;i<data.length;i+=4){ R[data[i]]++; G[data[i+1]]++; B[data[i+2]]++; }
+  const rest=[]; for(let v=1;v<255;v++) rest.push(R[v],G[v],B[v]);
+  rest.sort((a,b)=>a-b);
+  let ref=(rest[Math.floor(rest.length*0.995)]||1)*1.05;
+  const W=histCanvas.width,H=histCanvas.height;
+  histCtx.clearRect(0,0,W,H);
+  histCtx.strokeStyle="rgba(255,255,255,0.06)";
+  for(let q=1;q<4;q++){ const x=Math.round(q/4*W)+0.5; histCtx.beginPath();histCtx.moveTo(x,0);histCtx.lineTo(x,H);histCtx.stroke(); }
+  histCtx.globalCompositeOperation="lighter";
+  [[R,"230,80,80"],[G,"90,200,90"],[B,"100,140,235"]].forEach(([arr,rgb])=>{
+    histCtx.beginPath(); histCtx.moveTo(0,H);
+    for(let v=0;v<256;v++){ histCtx.lineTo(v/255*W, H-Math.min(1,arr[v]/ref)*H); }
+    histCtx.lineTo(W,H); histCtx.closePath();
+    histCtx.fillStyle=`rgba(${rgb},0.34)`; histCtx.fill();
+    histCtx.strokeStyle=`rgba(${rgb},0.9)`; histCtx.beginPath();
+    for(let v=0;v<256;v++){ const x=v/255*W,y=H-Math.min(1,arr[v]/ref)*H; v?histCtx.lineTo(x,y):histCtx.moveTo(x,y); }
+    histCtx.stroke();
+  });
+  histCtx.globalCompositeOperation="source-over";
+}
+preview.addEventListener("load", updateAnalysis);
+preview.addEventListener("mousemove", e=>{
+  if(!_offImg) return;
+  const n=norm(e);
+  const x=Math.min(_offImg.width-1,Math.floor(n.x*_offImg.width));
+  const y=Math.min(_offImg.height-1,Math.floor(n.y*_offImg.height));
+  const d=_offImg.data, i=(y*_offImg.width+x)*4;
+  document.getElementById("probe").textContent=
+    `R ${String(d[i]).padStart(3)}   G ${String(d[i+1]).padStart(3)}   B ${String(d[i+2]).padStart(3)}`;
+  if(typeof scopeProbe==="function") scopeProbe(n.x, d[i],d[i+1],d[i+2]);
+});
+preview.addEventListener("mouseleave", ()=>{
+  document.getElementById("probe").textContent="move over the image to read values";
+  if(typeof scopeProbe==="function") scopeProbe(-1,0,0,0);
+});
+
+// --- Scopes: RGB parade + vectorscope (client-side, deferred while collapsed) ---
+let scopesOpen=false, lastScopeImg=null;
+function toggleScopes(){
+  scopesOpen=!scopesOpen;
+  document.getElementById("scopes").classList.toggle("collapsed",!scopesOpen);
+  document.getElementById("sc-caret").textContent="▸"; // rotated via CSS
+  if(scopesOpen && lastScopeImg) updateScopes(lastScopeImg);
+}
+function updateScopes(img){
+  lastScopeImg=img;
+  if(!scopesOpen) return;
+  drawParade(img); drawVector(img);
+}
+function drawParade(img){
+  const cv=document.getElementById("parade"), ctx=cv.getContext("2d");
+  const W=cv.width,H=cv.height, cw=Math.floor(W/3);
+  const out=ctx.createImageData(W,H), o=out.data;
+  const sw=img.width, sh=img.height, sd=img.data, inc=42;
+  for(let y=0;y<sh;y++){
+    const rowf=y*sw;
+    for(let x=0;x<sw;x++){
+      const si=(rowf+x)*4, colx=Math.min(cw-1,(x/sw*cw)|0);
+      for(let c=0;c<3;c++){
+        const px=c*cw+colx, py=H-1-((sd[si+c]/255*(H-1))|0), di=(py*W+px)*4;
+        if(o[di+c]<255-inc) o[di+c]+=inc; else o[di+c]=255;
+        o[di+3]=255;
+      }
+    }
+  }
+  ctx.putImageData(out,0,0);
+  ctx.strokeStyle="rgba(255,255,255,0.05)";
+  for(let code=0;code<=1024;code+=128){ const y=H-1-code/1023*(H-1)+0.5;
+    ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(W,y);ctx.stroke(); }
+  ctx.strokeStyle="rgba(255,255,255,0.14)";
+  for(let c=1;c<3;c++){ const x=c*cw+0.5; ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x,H);ctx.stroke(); }
+  ctx.setLineDash([3,3]); ctx.strokeStyle="rgba(230,200,90,0.45)";
+  [95,685].forEach(code=>{ const y=H-1-code/1023*(H-1)+0.5; ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(W,y);ctx.stroke(); });
+  ctx.setLineDash([]);
+}
+function cbcr(r,g,b){ const Y=0.299*r+0.587*g+0.114*b; return [(b-Y)*0.564,(r-Y)*0.713]; }
+function drawVector(img){
+  const cv=document.getElementById("vector"), ctx=cv.getContext("2d");
+  const S=cv.width, cx=S/2, cy=S/2, R=S/2*0.92, scale=R/140;
+  const out=ctx.createImageData(S,S), o=out.data;
+  const sw=img.width, sh=img.height, sd=img.data, n=sw*sh;
+  for(let p=0;p<n;p++){
+    const si=p*4, r=sd[si],g=sd[si+1],b=sd[si+2], cc=cbcr(r,g,b);
+    const px=(cx+cc[0]*scale)|0, py=(cy-cc[1]*scale)|0;
+    if(px<0||px>=S||py<0||py>=S) continue;
+    const di=(py*S+px)*4;
+    o[di]=Math.min(255,o[di]+(r>>2)); o[di+1]=Math.min(255,o[di+1]+(g>>2)); o[di+2]=Math.min(255,o[di+2]+(b>>2));
+    o[di+3]=255;
+  }
+  ctx.putImageData(out,0,0);
+  ctx.strokeStyle="rgba(255,255,255,0.14)";
+  ctx.beginPath();ctx.arc(cx,cy,R,0,7);ctx.stroke();
+  ctx.beginPath();ctx.arc(cx,cy,R*0.75,0,7);ctx.stroke();
+  ctx.beginPath();ctx.moveTo(cx-R,cy);ctx.lineTo(cx+R,cy);ctx.moveTo(cx,cy-R);ctx.lineTo(cx,cy+R);ctx.stroke();
+  ctx.strokeStyle="rgba(255,255,255,0.5)"; ctx.fillStyle="rgba(210,210,210,0.8)"; ctx.font="8px monospace";
+  [["R",191,0,0],["Yl",191,191,0],["G",0,191,0],["Cy",0,191,191],["B",0,0,191],["Mg",191,0,191]].forEach(t=>{
+    const cc=cbcr(t[1],t[2],t[3]), x=cx+cc[0]*scale, y=cy-cc[1]*scale;
+    ctx.strokeRect(x-4,y-4,8,8); ctx.fillText(t[0],x+5,y-3);
+  });
+}
+function scopeProbe(nx,r,g,b){
+  document.getElementById("sc-probe").textContent = nx<0?"":`R ${r}  G ${g}  B ${b}`;
+}
 function updateSwatch(kind){
   const p=P(); const v = kind==="black"?p.black:p.white;
   const has = kind==="black"? (p.black[0]||p.black[1]||p.black[2]) : p.hasWhite;
@@ -519,6 +715,11 @@ async function exportRoll(all){
 }
 
 function setStatus(s){ document.getElementById("status").textContent=s; }
+
+// Optional deep-link: ?dir=/path/to/roll auto-loads; &scopes=1 opens scopes.
+(function(){ const q=new URLSearchParams(location.search);
+  if(q.get("scopes")==="1"){ scopesOpen=true; document.getElementById("scopes").classList.remove("collapsed"); }
+  const d=q.get("dir"); if(d){ document.getElementById("dir").value=d; loadRoll(); } })();
 </script>
 </body>
 </html>

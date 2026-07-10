@@ -72,6 +72,11 @@ type adjDTO struct {
 	Temp, Tint                                 float64
 	Highlights, Shadows                        float64
 	Blackpoint, Whitepoint, SubSat             float64
+	// Per-channel Levels
+	ChInputGain, ChMasterShift, ChMasterGain float64
+	ChRShift, ChRGain, ChRBlackpoint         float64
+	ChGShift, ChGGain, ChGBlackpoint         float64
+	ChBShift, ChBGain, ChBBlackpoint         float64
 }
 
 type curvesDTO struct {
@@ -108,6 +113,10 @@ func (r *specReq) toSpec() pipeline.Spec {
 	p.Kelvin, p.Tint = a.Temp, a.Tint
 	p.Highlights, p.Shadows = a.Highlights, a.Shadows
 	p.Blackpoint, p.Whitepoint, p.SubSaturation = a.Blackpoint, a.Whitepoint, a.SubSat
+	p.ChInputGain, p.ChMasterShift, p.ChMasterGain = a.ChInputGain, a.ChMasterShift, a.ChMasterGain
+	p.ChRShift, p.ChRGain, p.ChRBlackpoint = a.ChRShift, a.ChRGain, a.ChRBlackpoint
+	p.ChGShift, p.ChGGain, p.ChGBlackpoint = a.ChGShift, a.ChGGain, a.ChGBlackpoint
+	p.ChBShift, p.ChBGain, p.ChBBlackpoint = a.ChBShift, a.ChBGain, a.ChBBlackpoint
 	sp.Adjust = p
 
 	if r.Mode == "reference" {
