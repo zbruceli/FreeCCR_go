@@ -101,6 +101,8 @@
   .grp.m { color:var(--dim); }
   .sel { background:var(--panel2); border:1px solid var(--line); color:var(--txt); border-radius:5px;
          padding:4px; font-size:11px; }
+  .exrow { display:flex; align-items:center; gap:8px; margin-bottom:6px; }
+  .exrow > label { width:60px; flex-shrink:0; color:var(--dim); font-size:12px; }
   #analysis { margin-bottom:12px; }
   #hist { width:100%; height:88px; display:block; background:#2a2a2a; border:1px solid var(--line);
           border-radius:5px; }
@@ -278,30 +280,29 @@
     <div class="sec">
       <h3>Export</h3>
       <div class="row"><input type="text" id="outDir" placeholder="output folder" style="flex:1"></div>
-      <div class="row"><input type="text" id="naming" value="{name}_ccr" placeholder="{name}_ccr" style="flex:1"
-             title="template: {name} {seq} {date} {time}"></div>
-      <div class="row">
-        <label class="ck">Format
-          <select id="format" class="sel">
-            <option value="jpg">JPEG · 8-bit</option>
-            <option value="tif">TIFF · 16-bit</option>
-            <option value="dng">DNG · linear</option>
-          </select></label>
-        <label class="ck">q<input type="number" id="quality" value="95" min="1" max="100" style="width:52px"></label>
+      <div class="row"><input type="text" id="naming" value="{name}_ccr" placeholder="name template"
+             title="template: {name} {seq} {date} {time}" style="flex:1"></div>
+      <div class="exrow"><label>Format</label>
+        <select id="format" class="sel" style="flex:1" onchange="onFormatChange()">
+          <option value="jpg">JPEG · 8-bit</option>
+          <option value="tif">TIFF · 16-bit</option>
+          <option value="dng">DNG · linear</option>
+        </select>
+        <input type="number" id="quality" value="95" min="1" max="100" title="JPEG quality" style="width:52px">
       </div>
-      <div class="row">
-        <label class="ck">Resize
-          <select id="resize" class="sel">
-            <option value="0">Original</option><option value="4000">4000</option>
-            <option value="2000">2000</option><option value="1080">1080</option>
-          </select></label>
-        <label class="ck">If exists
-          <select id="overwrite" class="sel">
-            <option value="rename">rename</option><option value="overwrite">overwrite</option>
-            <option value="skip">skip</option>
-          </select></label>
+      <div class="exrow"><label>Resize</label>
+        <select id="resize" class="sel" style="flex:1">
+          <option value="0">Original</option><option value="4000">4000 px</option>
+          <option value="2000">2000 px</option><option value="1080">1080 px</option>
+        </select>
       </div>
-      <label class="ck"><input type="checkbox" id="openAfter"> open folder when done</label>
+      <div class="exrow"><label>If exists</label>
+        <select id="overwrite" class="sel" style="flex:1">
+          <option value="rename">rename</option><option value="overwrite">overwrite</option>
+          <option value="skip">skip</option>
+        </select>
+      </div>
+      <label class="ck" style="margin-top:2px"><input type="checkbox" id="openAfter"> open folder when done</label>
       <div class="btns">
         <button class="primary" onclick="exportRoll('all')">Export All</button>
         <button onclick="exportRoll('current')">Current</button>
@@ -938,6 +939,10 @@ window.addEventListener("keydown",e=>{
 });
 function resetAdj(){ ADJ_KEYS.forEach(k=>P().adj[k]=0); loadParamsIntoUI(); refresh(); }
 
+function onFormatChange(){
+  document.getElementById("quality").style.display =
+    document.getElementById("format").value==="jpg" ? "" : "none";
+}
 function exportList(scope){
   if(scope==="current") return cur<0?[]:[cur];
   if(scope==="selected") return selected.size?[...selected]:(cur<0?[]:[cur]);
