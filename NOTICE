@@ -26,7 +26,16 @@ code.
 No warranty; see sections 15–17 of the LICENSE.
 
 Third-party components:
-  - RAW decoding uses libraw (LGPL-2.1 / CDDL-1.0), linked at build time via
-    cgo when built with `-tags libraw`. libraw is not distributed with this
-    source; install it separately (e.g. `brew install libraw`).
+  - RAW decoding uses libraw (dual-licensed LGPL-2.1 / CDDL-1.0;
+    https://www.libraw.org), linked via cgo when built with `-tags libraw`.
+    The distributed macOS .app bundles libraw and its dependencies as dynamic
+    libraries in Contents/Frameworks. libraw remains a separate dynamic library
+    (not statically linked), so it can be replaced by the user as required by
+    LGPL-2.1 §6. The corresponding license texts ship inside the bundle at
+    Contents/Resources/licenses. When building from source, install libraw
+    separately (e.g. `brew install libraw`).
+  - libraw's own dependencies, also bundled in the distributed macOS .app:
+      * Little CMS 2 (lcms2) ....... MIT license
+      * libjpeg-turbo .............. BSD-style / IJG license
+      * LLVM OpenMP runtime (libomp)  Apache-2.0 with LLVM exception
   - Go standard library and golang.org/x/image (BSD-3-Clause).

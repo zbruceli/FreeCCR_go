@@ -32,6 +32,15 @@ jobs:
 
   macos:
     runs-on: macos-14
+    # These come from repo secrets. If MACOS_CERTIFICATE is unset the cert-import
+    # and notarization steps no-op and the build falls back to ad-hoc signing, so
+    # the workflow still succeeds before secrets are configured.
+    env:
+      MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
+      MACOS_CERTIFICATE_PWD: ${{ secrets.MACOS_CERTIFICATE_PWD }}
+      APPLE_ID: ${{ secrets.APPLE_ID }}
+      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+      APPLE_APP_PWD: ${{ secrets.APPLE_APP_PWD }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -39,7 +48,21 @@ jobs:
           go-version-file: go.mod
       - name: Install libraw
         run: brew install libraw
-      - name: Build .app (ad-hoc signed; no Developer ID cert in CI)
+      - name: Import Developer ID certificate
+        if: env.MACOS_CERTIFICATE != ''
+        run: |
+          KEYCHAIN="$RUNNER_TEMP/build.keychain"
+          KPWD="$(uuidgen)"
+          echo "$MACOS_CERTIFICATE" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security create-keychain -p "$KPWD" "$KEYCHAIN"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security unlock-keychain -p "$KPWD" "$KEYCHAIN"
+          security import "$RUNNER_TEMP/cert.p12" -k "$KEYCHAIN" \
+            -P "$MACOS_CERTIFICATE_PWD" -T /usr/bin/codesign -T /usr/bin/security
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KPWD" "$KEYCHAIN"
+          security list-keychains -d user -s "$KEYCHAIN" $(security list-keychains -d user | tr -d '"')
+          rm "$RUNNER_TEMP/cert.p12"
+      - name: Build, sign & notarize .app
         run: make app
       - name: Zip bundle
         run: ditto -c -k --keepParent bin/FreeCCR-go.app FreeCCR-go-macos.zip

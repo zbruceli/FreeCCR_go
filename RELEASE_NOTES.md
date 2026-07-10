@@ -18,14 +18,16 @@ a full color-correction suite — as a native desktop app, a local web UI, or a 
 
 | Platform | Asset | Runtime needs |
 |---|---|---|
-| macOS (Apple Silicon) | `FreeCCR-go-macos.zip` (`.app`) | `brew install libraw` |
+| macOS (Apple Silicon) | `FreeCCR-go-macos.zip` (`.app`) | none — libraw & deps are bundled |
 | Windows x64 | `FreeCCR-go-windows.exe` | MSYS2/MinGW **libraw** DLLs on `PATH` |
 | Linux x64 | `FreeCCR-go-linux` | `libraw`, `libgtk-3`, `webkit2gtk-4.1` |
 
-These are early builds that **link libraw dynamically** rather than bundling it —
-self-contained installers (bundled libs, AppImage, notarized `.dmg`, Windows
-installer) are planned. Building locally with RAW support just needs the platform
-libraw (`brew`/`apt`/MSYS2).
+The macOS `.app` is **self-contained** — libraw and its dependencies (lcms2,
+libjpeg-turbo, libomp) are bundled in `Contents/Frameworks`, so no `brew install`
+is needed to run it. The Windows/Linux builds still link their platform libraries
+dynamically; self-contained packaging (Windows DLL bundle, Linux AppImage) is
+planned. Building locally with RAW support just needs the platform libraw
+(`brew`/`apt`/MSYS2).
 
 The macOS build here is **ad-hoc signed** (not notarized), so Gatekeeper flags it
 on first launch — right-click → **Open**. A local `make app` signs it with your
