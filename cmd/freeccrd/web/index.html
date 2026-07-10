@@ -878,6 +878,7 @@ async function doPreview(){
 
 // --- Sync groups + copy/paste + multi-select ---
 const SYNC_GROUPS = {
+  "Conversion (B/W Point)": {top:["mode","black","white","hasWhite","density","ref","hasRef","ws"]},
   "White Balance": {adj:["temp","tint"]},
   "Tone": {adj:["exposure","brightness","highlights","whitepoint","shadows","blackpoint","contrast"], top:["gamma","gammaLum"]},
   "Saturation": {adj:["saturation","subsat"]},
@@ -965,7 +966,8 @@ function setStatus(s){ document.getElementById("status").textContent=s; }
 // Optional deep-link: ?dir=/path/to/roll auto-loads; &scopes=1 opens scopes.
 (function(){ const q=new URLSearchParams(location.search);
   if(q.get("scopes")==="1"){ scopesOpen=true; document.getElementById("scopes").classList.remove("collapsed"); }
-  const d=q.get("dir"); if(d){ document.getElementById("dir").value=d; loadRoll(); } })();
+  const d=q.get("dir"); if(d){ document.getElementById("dir").value=d; loadRoll(); }
+  if(q.get("sync")==="1") setTimeout(openSyncModal, 1500); })();
 </script>
 </body>
 </html>
