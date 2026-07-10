@@ -29,9 +29,8 @@ dynamically; self-contained packaging (Windows DLL bundle, Linux AppImage) is
 planned. Building locally with RAW support just needs the platform libraw
 (`brew`/`apt`/MSYS2).
 
-The macOS build here is **ad-hoc signed** (not notarized), so Gatekeeper flags it
-on first launch — right-click → **Open**. A local `make app` signs it with your
-Developer ID.
+The macOS `.app` is **signed with a Developer ID and notarized by Apple**, so it
+launches without a Gatekeeper warning — no right-click → Open needed.
 
 ### Build from source
 
