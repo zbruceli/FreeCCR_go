@@ -52,7 +52,9 @@ PLIST
 
 # --- code signing ---
 if [ -z "${SIGN_IDENTITY:-}" ]; then
-  SIGN_IDENTITY=$(security find-identity -v -p codesigning 2>/dev/null | grep "Developer ID Application" | head -1 | sed -E 's/.*"(.*)".*/\1/')
+  # `|| true`: grep exits 1 (with pipefail) when no Developer ID cert is present
+  # (e.g. in CI); fall back to ad-hoc signing instead of aborting.
+  SIGN_IDENTITY=$(security find-identity -v -p codesigning 2>/dev/null | grep "Developer ID Application" | head -1 | sed -E 's/.*"(.*)".*/\1/' || true)
   [ -z "$SIGN_IDENTITY" ] && SIGN_IDENTITY="-"
 fi
 if [ "$SIGN_IDENTITY" = "-" ]; then
