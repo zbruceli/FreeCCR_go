@@ -1,9 +1,7 @@
 # Build the FreeCCR-go desktop app on each native OS runner (Wails needs the
 # platform webview; RAW needs libraw — neither cross-compiles cleanly). Runs on
-# demand and on version tags; uploads a per-platform artifact.
-#
-# NOTE: authored to the standard Wails + msys2 conventions but not yet run in
-# CI — the first run may need small tweaks (especially the Windows/libraw job).
+# demand and on version tags; uploads a per-platform artifact, and on a `v*` tag
+# assembles them into a GitHub Release.
 name: build
 
 on:
@@ -78,3 +76,33 @@ jobs:
         with:
           name: FreeCCR-go-windows
           path: FreeCCR-go.exe
+
+  # On a version tag, collect the three platform builds into a GitHub Release.
+  release:
+    needs: [linux, macos, windows]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+      - name: Stage release assets
+        run: |
+          mkdir -p out
+          cp dist/FreeCCR-go-macos/FreeCCR-go-macos.zip out/FreeCCR-go-macos.zip
+          cp dist/FreeCCR-go-windows/FreeCCR-go.exe     out/FreeCCR-go-windows.exe
+          cp dist/FreeCCR-go-linux/FreeCCR-go-linux     out/FreeCCR-go-linux
+          ls -l out
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" \
+            --title "FreeCCR-go ${GITHUB_REF_NAME}" \
+            --notes-file RELEASE_NOTES.md \
+            out/FreeCCR-go-macos.zip \
+            out/FreeCCR-go-windows.exe \
+            out/FreeCCR-go-linux
