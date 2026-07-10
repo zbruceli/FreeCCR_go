@@ -17,10 +17,12 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"sort"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -455,10 +457,14 @@ func deWindow(pix []float32, o int, ws bool) (float64, float64, float64) {
 
 func (s *server) handleExport(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		OutDir  string    `json:"outDir"`
-		Format  string    `json:"format"` // "tif" | "jpg" | "dng"
-		Quality int       `json:"quality"`
-		Frames  []specReq `json:"frames"`
+		OutDir    string    `json:"outDir"`
+		Format    string    `json:"format"` // "tif" | "jpg" | "dng"
+		Quality   int       `json:"quality"`
+		Naming    string    `json:"naming"`    // template, e.g. {name}_ccr
+		Resize    int       `json:"resize"`    // long-edge px; 0 = original
+		Overwrite string    `json:"overwrite"` // "rename" | "overwrite" | "skip"
+		OpenAfter bool      `json:"openAfter"`
+		Frames    []specReq `json:"frames"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, err.Error(), 400)
@@ -477,7 +483,12 @@ func (s *server) handleExport(w http.ResponseWriter, r *http.Request) {
 	if req.Format == "" {
 		req.Format = "tif"
 	}
+	if req.Naming == "" {
+		req.Naming = "{name}_ccr"
+	}
 	ext := export.Ext(req.Format)
+	now := time.Now()
+	var skipped int
 
 	// Full-res decode + process per frame, parallel across frames (kernels
 	// single-threaded, like the batch pipeline).
@@ -491,13 +502,21 @@ func (s *server) handleExport(w http.ResponseWriter, r *http.Request) {
 	var mu sync.Mutex
 	var ok, failed int
 	var firstErr string
-	for _, fr := range req.Frames {
+	for seq, fr := range req.Frames {
 		frame := s.sess.Frame(fr.ID)
 		if frame == nil {
 			continue
 		}
+		base := resolveName(req.Naming, session.TrimExt(frame.Name), seq+1, now)
+		out := resolveCollision(filepath.Join(req.OutDir, base+ext), req.Overwrite)
+		if out == "" { // skip existing
+			mu.Lock()
+			skipped++
+			mu.Unlock()
+			continue
+		}
 		wg.Add(1)
-		go func(fr specReq, path, name string) {
+		go func(fr specReq, path, out string) {
 			defer wg.Done()
 			sem <- struct{}{}
 			defer func() { <-sem }()
@@ -506,7 +525,13 @@ func (s *server) handleExport(w http.ResponseWriter, r *http.Request) {
 				sp := fr.toSpec()
 				final := sp.Process(im)
 				image.PutBuf(im.Pix)
-				out := filepath.Join(req.OutDir, session.TrimExt(name)+ext)
+				if req.Resize > 0 {
+					rs := decode.ResizeToMaxSide(final, req.Resize)
+					if rs != final {
+						image.PutBuf(final.Pix)
+						final = rs
+					}
+				}
 				err = export.Write(out, final, req.Format, req.Quality)
 				image.PutBuf(final.Pix)
 			}
@@ -520,13 +545,70 @@ func (s *server) handleExport(w http.ResponseWriter, r *http.Request) {
 				ok++
 			}
 			mu.Unlock()
-		}(fr, frame.Path, frame.Name)
+		}(fr, frame.Path, out)
 	}
 	wg.Wait()
+	if req.OpenAfter && ok > 0 {
+		openFolder(req.OutDir)
+	}
 	writeJSON(w, map[string]any{
-		"ok": ok, "failed": failed, "outDir": req.OutDir,
+		"ok": ok, "failed": failed, "skipped": skipped, "outDir": req.OutDir,
 		"seconds": time.Since(start).Seconds(), "error": firstErr,
 	})
+}
+
+// resolveName expands a filename template ({name}/{seq}/{date}/{time}).
+func resolveName(tmpl, name string, seq int, t time.Time) string {
+	r := strings.NewReplacer(
+		"{name}", name,
+		"{seq}", fmt.Sprintf("%03d", seq),
+		"{date}", t.Format("2006-01-02"),
+		"{time}", t.Format("150405"),
+	)
+	out := r.Replace(tmpl)
+	if out == "" {
+		out = name
+	}
+	return out
+}
+
+// resolveCollision applies the overwrite policy, returning the path to write or
+// "" to skip.
+func resolveCollision(path, policy string) string {
+	if _, err := os.Stat(path); err != nil {
+		return path // doesn't exist
+	}
+	switch policy {
+	case "skip":
+		return ""
+	case "overwrite":
+		return path
+	default: // rename
+		ext := filepath.Ext(path)
+		stem := strings.TrimSuffix(path, ext)
+		for i := 1; i < 10000; i++ {
+			cand := fmt.Sprintf("%s-%d%s", stem, i, ext)
+			if _, err := os.Stat(cand); err != nil {
+				return cand
+			}
+		}
+		return path
+	}
+}
+
+// openFolder reveals a directory in the OS file manager (best-effort).
+func openFolder(dir string) {
+	var cmd string
+	var args []string
+	switch runtime.GOOS {
+	case "darwin":
+		cmd, args = "open", []string{dir}
+	case "windows":
+		cmd, args = "explorer", []string{dir}
+	default:
+		cmd, args = "xdg-open", []string{dir}
+	}
+	_ = exec.Command(cmd, args...).Start()
 }
 
 // --- helpers --------------------------------------------------------------

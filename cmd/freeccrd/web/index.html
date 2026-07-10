@@ -97,6 +97,8 @@
   .grp { font-size:10px; text-transform:uppercase; letter-spacing:.6px; margin:8px 0 3px; }
   .grp.r { color:var(--chr); } .grp.g { color:var(--chg); } .grp.b { color:var(--chb); }
   .grp.m { color:var(--dim); }
+  .sel { background:var(--panel2); border:1px solid var(--line); color:var(--txt); border-radius:5px;
+         padding:4px; font-size:11px; }
   #analysis { margin-bottom:12px; }
   #hist { width:100%; height:88px; display:block; background:#2a2a2a; border:1px solid var(--line);
           border-radius:5px; }
@@ -118,6 +120,15 @@
                  cursor:pointer; }
   .browse-item:hover { background:var(--panel2); }
   .browse-item .cnt { margin-left:auto; font-size:11px; color:var(--accent); }
+  #syncModal { display:none; position:fixed; inset:0; background:rgba(0,0,0,.55);
+               z-index:101; align-items:center; justify-content:center; }
+  #syncBox { background:var(--panel); border:1px solid var(--line); border-radius:8px;
+             width:320px; max-width:92vw; display:flex; flex-direction:column; }
+  #syncBox .hd, #syncBox .ft { padding:10px 14px; display:flex; gap:8px; align-items:center; }
+  #syncBox .hd { border-bottom:1px solid var(--line); }
+  #syncBox .ft { border-top:1px solid var(--line); }
+  #syncGroups label { display:flex; align-items:center; gap:8px; padding:5px 4px; cursor:pointer; }
+  .thumb.multi { border-color:var(--line-strong); }
 </style>
 </head>
 <body>
@@ -253,31 +264,63 @@
     <div class="sec">
       <h3>Roll</h3>
       <div class="btns">
-        <button onclick="syncAll()">Sync to All</button>
+        <button onclick="openSyncModal()">Sync to All…</button>
+        <button onclick="copyAdj()">Copy</button>
+        <button onclick="pasteAdj()">Paste</button>
         <button onclick="resetAdj()">Reset Adjust</button>
       </div>
+      <div class="muted" style="margin-top:4px">⌘/Ctrl+C / +V · Ctrl-click thumbnails to multi-select</div>
     </div>
 
     <div class="sec">
       <h3>Export</h3>
       <div class="row"><input type="text" id="outDir" placeholder="output folder" style="flex:1"></div>
+      <div class="row"><input type="text" id="naming" value="{name}_ccr" placeholder="{name}_ccr" style="flex:1"
+             title="template: {name} {seq} {date} {time}"></div>
       <div class="row">
         <label class="ck">Format
-          <select id="format" style="background:var(--panel2);border:1px solid var(--line);color:var(--txt);border-radius:5px;padding:4px">
+          <select id="format" class="sel">
             <option value="jpg">JPEG · 8-bit</option>
             <option value="tif">TIFF · 16-bit</option>
             <option value="dng">DNG · linear</option>
           </select></label>
-        <label class="ck">q<input type="number" id="quality" value="95" min="1" max="100" style="width:56px"></label>
+        <label class="ck">q<input type="number" id="quality" value="95" min="1" max="100" style="width:52px"></label>
       </div>
+      <div class="row">
+        <label class="ck">Resize
+          <select id="resize" class="sel">
+            <option value="0">Original</option><option value="4000">4000</option>
+            <option value="2000">2000</option><option value="1080">1080</option>
+          </select></label>
+        <label class="ck">If exists
+          <select id="overwrite" class="sel">
+            <option value="rename">rename</option><option value="overwrite">overwrite</option>
+            <option value="skip">skip</option>
+          </select></label>
+      </div>
+      <label class="ck"><input type="checkbox" id="openAfter"> open folder when done</label>
       <div class="btns">
-        <button class="primary" onclick="exportRoll(true)">Export All</button>
-        <button onclick="exportRoll(false)">Export Current</button>
+        <button class="primary" onclick="exportRoll('all')">Export All</button>
+        <button onclick="exportRoll('current')">Current</button>
+        <button onclick="exportRoll('selected')">Selected</button>
       </div>
       <div class="muted" id="exportMsg" style="margin-top:6px"></div>
     </div>
   </div>
 </main>
+
+<div id="syncModal" onclick="if(event.target===this)closeSync()">
+  <div id="syncBox">
+    <div class="hd"><b>Sync to All</b><button style="margin-left:auto" onclick="closeSync()">✕</button></div>
+    <div id="syncGroups" style="padding:8px 14px;"></div>
+    <div class="ft">
+      <button onclick="syncSelectAll(true)">All</button>
+      <button onclick="syncSelectAll(false)">None</button>
+      <span style="flex:1"></span>
+      <button class="primary" onclick="applySync()">Sync</button>
+    </div>
+  </div>
+</div>
 
 <div id="browseModal" onclick="if(event.target===this)closeBrowse()">
   <div id="browseBox">
@@ -318,6 +361,7 @@ function toggleSec(id){
   document.getElementById("car-"+id).parentElement.classList.toggle("open",open);
 }
 let frames = [], cur = -1, params = {}, sampleMode = null, previewURL = null, refreshTimer = null;
+let selected = new Set(), clipboard = null;
 
 const BANDS = ["red","skin","yellow","green","cyan","blue","purple"];
 const BAND_PARAMS = [["subsat","Sub-Sat"],["sat","Sat"],["bright","Bright"],["hue","Hue"]];
@@ -503,8 +547,9 @@ function renderThumbs(){
   frames.forEach(f=>{
     const d=document.createElement("div"); d.className="thumb"+(f.id===cur?" sel":""); d.id="th-"+f.id;
     d.innerHTML=`<img loading="lazy" src="/api/thumb?id=${f.id}"><div class="nm">${f.name}</div>`;
-    d.onclick=()=>selectFrame(f.id); t.appendChild(d);
+    d.onclick=(e)=>onThumbClick(f.id,e); t.appendChild(d);
   });
+  updateThumbSel();
 }
 
 function selectFrame(id){
@@ -514,6 +559,7 @@ function selectFrame(id){
     document.getElementById("stage").classList.remove("cropping");
     document.getElementById("cropbox").style.display="none"; }
   cur=id;
+  if(typeof resetView==="function") resetView();
   document.querySelectorAll(".thumb").forEach(e=>e.classList.remove("sel"));
   const th=document.getElementById("th-"+id); if(th) th.classList.add("sel");
   loadParamsIntoUI(); refresh();
@@ -776,6 +822,29 @@ window.addEventListener("mousemove",e=>{
   showCropBox(P().crop);
 });
 window.addEventListener("mouseup",()=>{ cropDragging=false; });
+
+// --- Zoom / pan (CSS transform; sampling+crop stay correct via bounding rect) ---
+let zoom=1, panX=0, panY=0, panning=false, panStart=null;
+const stageEl=document.getElementById("stage");
+function applyView(){ preview.style.transform=`translate(${panX}px,${panY}px) scale(${zoom})`;
+  if(cropMode) showCropBox(P().hasCrop||cropDragging?P().crop:null); }
+function resetView(){ zoom=1; panX=0; panY=0; applyView(); }
+stageEl.addEventListener("wheel",e=>{
+  if(cur<0) return; e.preventDefault();
+  const nz=Math.min(8,Math.max(1, zoom*(e.deltaY<0?1.25:0.8)));
+  const r=preview.getBoundingClientRect();
+  const fx=(e.clientX-r.left)/r.width, fy=(e.clientY-r.top)/r.height;
+  zoom=nz; applyView();
+  const r2=preview.getBoundingClientRect();
+  panX+=e.clientX-(r2.left+fx*r2.width); panY+=e.clientY-(r2.top+fy*r2.height);
+  if(zoom===1){ panX=0; panY=0; }
+  applyView();
+  setStatus(`zoom ${Math.round(zoom*100)}%`);
+},{passive:false});
+stageEl.addEventListener("mousedown",e=>{ if(e.button===1 && zoom>1){ panning=true; panStart={x:e.clientX-panX,y:e.clientY-panY}; e.preventDefault(); } });
+window.addEventListener("mousemove",e=>{ if(panning){ panX=e.clientX-panStart.x; panY=e.clientY-panStart.y; applyView(); } });
+window.addEventListener("mouseup",e=>{ if(e.button===1) panning=false; });
+preview.addEventListener("dblclick",e=>{ if(!cropMode && !sampleMode){ resetView(); setStatus("zoom 100%"); } });
 async function autoWB(){
   if(cur<0) return;
   const r=await fetch("/api/autowb",{method:"POST",headers:{'Content-Type':'application/json'},
@@ -804,23 +873,87 @@ async function doPreview(){
   document.getElementById("empty").style.display="none";
 }
 
-function syncAll(){
-  const src=JSON.stringify(P());
-  frames.forEach(f=>{ params[f.id]=JSON.parse(src); });
-  setStatus(`synced current settings to ${frames.length} frames`);
+// --- Sync groups + copy/paste + multi-select ---
+const SYNC_GROUPS = {
+  "White Balance": {adj:["temp","tint"]},
+  "Tone": {adj:["exposure","brightness","highlights","whitepoint","shadows","blackpoint","contrast"], top:["gamma","gammaLum"]},
+  "Saturation": {adj:["saturation","subsat"]},
+  "Curves": {top:["curves"]},
+  "Color Bands": {top:["bands","feather"]},
+  "Channel Levels": {adj:["chInputGain","chMasterShift","chMasterGain","chRShift","chRGain","chRBlackpoint","chGShift","chGGain","chGBlackpoint","chBShift","chBGain","chBBlackpoint"], top:["cineon"]},
+  "Crop / Rotate": {top:["rotation","hflip","vflip","fine","crop","hasCrop"]},
+};
+let syncSel = new Set(Object.keys(SYNC_GROUPS));
+function clone(v){ return (v&&typeof v==="object")?JSON.parse(JSON.stringify(v)):v; }
+function openSyncModal(){
+  if(cur<0) return;
+  const c=document.getElementById("syncGroups"); c.innerHTML="";
+  Object.keys(SYNC_GROUPS).forEach(name=>{
+    const l=document.createElement("label");
+    l.innerHTML=`<input type="checkbox" ${syncSel.has(name)?"checked":""}> ${name}`;
+    l.querySelector("input").onchange=e=>{ e.target.checked?syncSel.add(name):syncSel.delete(name); };
+    c.appendChild(l);
+  });
+  document.getElementById("syncModal").style.display="flex";
 }
+function closeSync(){ document.getElementById("syncModal").style.display="none"; }
+function syncSelectAll(on){ syncSel = on?new Set(Object.keys(SYNC_GROUPS)):new Set(); openSyncModal(); }
+function applySync(){
+  const src=P(); let cnt=0;
+  frames.forEach(f=>{ if(f.id===cur) return; const dst=params[f.id];
+    syncSel.forEach(name=>{ const g=SYNC_GROUPS[name];
+      (g.adj||[]).forEach(k=> dst.adj[k]=clone(src.adj[k]));
+      (g.top||[]).forEach(k=> dst[k]=clone(src[k]));
+    }); cnt++;
+  });
+  closeSync(); refresh(); setStatus(`synced ${syncSel.size} group(s) → ${cnt} frames`);
+}
+function copyAdj(){ if(cur<0)return; clipboard=clone(P()); setStatus("copied adjustments"); }
+function pasteAdj(){
+  if(!clipboard){ setStatus("nothing copied"); return; }
+  const targets = selected.size?[...selected]:(cur<0?[]:[cur]);
+  const keep=["black","white","hasWhite","mode","ref","hasRef"];
+  targets.forEach(id=>{ const t=params[id]; const k={}; keep.forEach(x=>k[x]=t[x]);
+    params[id]=Object.assign(clone(clipboard), k); });
+  loadParamsIntoUI(); refresh(); setStatus(`pasted to ${targets.length} frame(s)`);
+}
+function onThumbClick(id,e){
+  if(e.metaKey||e.ctrlKey){ selected.has(id)?selected.delete(id):selected.add(id); }
+  else if(e.shiftKey && cur>=0){ selected=new Set(); const a=Math.min(cur,id),b=Math.max(cur,id); for(let i=a;i<=b;i++)selected.add(i); }
+  else { selected=new Set([id]); }
+  selectFrame(id); updateThumbSel();
+}
+function updateThumbSel(){
+  frames.forEach(f=>{ const el=document.getElementById("th-"+f.id); if(el) el.classList.toggle("multi",selected.has(f.id)); });
+}
+window.addEventListener("keydown",e=>{
+  if((e.metaKey||e.ctrlKey) && !/^(INPUT|TEXTAREA|SELECT)$/.test((e.target.tagName||""))){
+    if(e.key==="c"){ copyAdj(); e.preventDefault(); }
+    else if(e.key==="v"){ pasteAdj(); e.preventDefault(); }
+  }
+});
 function resetAdj(){ ADJ_KEYS.forEach(k=>P().adj[k]=0); loadParamsIntoUI(); refresh(); }
 
-async function exportRoll(all){
-  const list = all? frames.map(f=>f.id) : [cur];
+function exportList(scope){
+  if(scope==="current") return cur<0?[]:[cur];
+  if(scope==="selected") return selected.size?[...selected]:(cur<0?[]:[cur]);
+  return frames.map(f=>f.id);
+}
+async function exportRoll(scope){
+  const list=exportList(scope);
+  if(!list.length){ setStatus("nothing to export"); return; }
   const payload = { outDir:document.getElementById("outDir").value.trim(),
     format:document.getElementById("format").value, quality:+document.getElementById("quality").value,
+    naming:document.getElementById("naming").value.trim()||"{name}_ccr",
+    resize:+document.getElementById("resize").value,
+    overwrite:document.getElementById("overwrite").value,
+    openAfter:document.getElementById("openAfter").checked,
     frames: list.map(id=>Object.assign({id},params[id])) };
-  document.getElementById("exportMsg").textContent="exporting…";
+  document.getElementById("exportMsg").textContent="exporting "+list.length+"…";
   const r=await fetch("/api/export",{method:"POST",headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
   const d=await r.json();
   document.getElementById("exportMsg").textContent =
-    `${d.ok} exported${d.failed?", "+d.failed+" failed":""} in ${d.seconds.toFixed(1)}s → ${d.outDir}`+
+    `${d.ok} exported${d.failed?", "+d.failed+" failed":""}${d.skipped?", "+d.skipped+" skipped":""} in ${d.seconds.toFixed(1)}s`+
     (d.error?(" · "+d.error):"");
 }
 
