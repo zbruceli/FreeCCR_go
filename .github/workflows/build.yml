@@ -95,10 +95,31 @@ jobs:
         run: |
           go build -tags "desktop,production,libraw" -ldflags "-H windowsgui" \
             -o FreeCCR-go.exe ./cmd/freeccr-app
+      - name: Bundle MinGW DLLs
+        # Walk the exe's PE import closure and copy every dependency that lives in
+        # /mingw64/bin (libraw + the MinGW runtime) next to it, so the app runs on
+        # a clean Windows box. System DLLs (in C:\Windows) are not in /mingw64/bin
+        # and are left out.
+        run: |
+          mkdir -p dist
+          cp FreeCCR-go.exe dist/
+          collect() {
+            objdump -p "$1" 2>/dev/null | awk '/DLL Name:/ {print $3}' | while read -r dll; do
+              if [ -f "/mingw64/bin/$dll" ] && [ ! -f "dist/$dll" ]; then
+                cp "/mingw64/bin/$dll" "dist/$dll"
+                collect "/mingw64/bin/$dll"
+              fi
+            done
+          }
+          collect FreeCCR-go.exe
+          echo "bundled: $(cd dist && echo *.dll)"
+      - name: Zip bundle
+        run: |
+          powershell.exe -NoProfile -Command "Compress-Archive -Path dist/* -DestinationPath FreeCCR-go-windows.zip -Force"
       - uses: actions/upload-artifact@v4
         with:
           name: FreeCCR-go-windows
-          path: FreeCCR-go.exe
+          path: FreeCCR-go-windows.zip
 
   # On a version tag, collect the three platform builds into a GitHub Release.
   release:
@@ -115,9 +136,9 @@ jobs:
       - name: Stage release assets
         run: |
           mkdir -p out
-          cp dist/FreeCCR-go-macos/FreeCCR-go-macos.zip out/FreeCCR-go-macos.zip
-          cp dist/FreeCCR-go-windows/FreeCCR-go.exe     out/FreeCCR-go-windows.exe
-          cp dist/FreeCCR-go-linux/FreeCCR-go-linux     out/FreeCCR-go-linux
+          cp dist/FreeCCR-go-macos/FreeCCR-go-macos.zip     out/FreeCCR-go-macos.zip
+          cp dist/FreeCCR-go-windows/FreeCCR-go-windows.zip out/FreeCCR-go-windows.zip
+          cp dist/FreeCCR-go-linux/FreeCCR-go-linux         out/FreeCCR-go-linux
           ls -l out
       - name: Publish release
         env:
@@ -127,5 +148,5 @@ jobs:
             --title "FreeCCR-go ${GITHUB_REF_NAME}" \
             --notes-file RELEASE_NOTES.md \
             out/FreeCCR-go-macos.zip \
-            out/FreeCCR-go-windows.exe \
+            out/FreeCCR-go-windows.zip \
             out/FreeCCR-go-linux
