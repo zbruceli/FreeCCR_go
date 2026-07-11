@@ -1,8 +1,15 @@
-## FreeCCR-go v0.1.0 — first release
+## FreeCCR-go v0.1.1
 
 A fast, cross-platform Go port of [FreeCCR](https://github.com/toonoumi/FreeCCR):
 turn color-negative film scans into positives with a physics-based conversion and
 a full color-correction suite — as a native desktop app, a local web UI, or a CLI.
+
+### New in v0.1.1
+
+- **Self-contained macOS app** — libraw and its dependencies are bundled into the
+  `.app`, so it runs with no `brew install`.
+- **Signed & notarized** — the macOS build is now Developer ID signed and notarized
+  by Apple, so it launches with no Gatekeeper warning.
 
 ### Highlights
 
