@@ -139,6 +139,18 @@ cat > "$APPDIR/apprun-hooks/libpath.sh" <<'HOOK'
 export LD_LIBRARY_PATH="${APPDIR}/usr/lib:${LD_LIBRARY_PATH}"
 HOOK
 
+# linuxdeploy's stock AppRun does not source apprun-hooks in this setup, so the
+# GTK/WebKit/fontconfig env never gets applied. Install our own AppRun that sets
+# APPDIR, sources every hook, then execs the app.
+cat > "$APPDIR/AppRun" <<'APPRUN'
+#!/bin/sh
+HERE="$(dirname "$(readlink -f "$0")")"
+export APPDIR="$HERE"
+for h in "$HERE"/apprun-hooks/*.sh; do [ -r "$h" ] && . "$h"; done
+exec "$HERE/usr/bin/FreeCCR-go" "$@"
+APPRUN
+chmod +x "$APPDIR/AppRun"
+
 echo "==> packaging $OUT..."
 rm -f "$OUT"
 appimagetool "$APPDIR" "$OUT"
