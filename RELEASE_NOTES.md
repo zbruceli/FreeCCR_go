@@ -1,22 +1,38 @@
-## FreeCCR-go v0.1.2
+## FreeCCR-go v0.1.3
 
 A fast, cross-platform Go port of [FreeCCR](https://github.com/toonoumi/FreeCCR):
 turn color-negative film scans into positives with a physics-based conversion and
 a full color-correction suite — as a native desktop app, a local web UI, or a CLI.
 
-### New in v0.1.2
+### New in v0.1.3
 
-- **Self-contained Windows build** — libraw and the MinGW runtime DLLs are bundled
-  in `FreeCCR-go-windows.zip`; unzip and run, no MSYS2 install needed.
+- Clearer, per-platform desktop **install instructions** (below and in the README).
 
-### Also in v0.1.1
+### Install the desktop app
 
-- **Self-contained macOS app** — libraw and its dependencies are bundled into the
-  `.app`, so it runs with no `brew install`.
-- **Signed & notarized** — the macOS build is Developer ID signed and notarized by
-  Apple, so it launches with no Gatekeeper warning.
+**macOS (Apple Silicon)**
+1. Download **`FreeCCR-go-macos.zip`** and unzip it.
+2. Drag **`FreeCCR-go.app`** to Applications and open it. It's Developer ID signed
+   and notarized, so it opens with no Gatekeeper warning. libraw and its
+   dependencies are bundled — nothing else to install.
 
-### Highlights
+**Windows (x64)**
+1. Download **`FreeCCR-go-windows.zip`** and unzip it — keep `FreeCCR-go.exe` and
+   the `.dll` files together in the same folder.
+2. Run **`FreeCCR-go.exe`**. All native libraries are bundled; it uses the
+   built-in WebView2 runtime (present on Windows 10/11).
+
+**Linux (x64)**
+1. Install the runtime libraries (Debian/Ubuntu; package names vary by distro):
+   ```
+   sudo apt install libraw23 libgtk-3-0 libwebkit2gtk-4.1-0
+   ```
+2. Download **`FreeCCR-go-linux`**, make it executable, and run it:
+   ```
+   chmod +x FreeCCR-go-linux && ./FreeCCR-go-linux
+   ```
+
+### Features
 
 - **Conversion** — two-point B/W-point (linear + optical-density), default-slope, and auto/reference modes, with working-space highlight headroom.
 - **Color correction** — WB/temp/tint, exposure, tone, contrast, saturation, per-channel levels, monotone-cubic **curves**, **gamma**, **7-band HSV color vectors**, and Cineon→Rec.709.
@@ -30,19 +46,14 @@ a full color-correction suite — as a native desktop app, a local web UI, or a 
 
 | Platform | Asset | Runtime needs |
 |---|---|---|
-| macOS (Apple Silicon) | `FreeCCR-go-macos.zip` (`.app`) | none — libraw & deps are bundled |
-| Windows x64 | `FreeCCR-go-windows.zip` | none — unzip and run (DLLs bundled) |
+| macOS (Apple Silicon) | `FreeCCR-go-macos.zip` (`.app`) | none — self-contained, notarized |
+| Windows x64 | `FreeCCR-go-windows.zip` | none — self-contained (DLLs bundled) |
 | Linux x64 | `FreeCCR-go-linux` | `libraw`, `libgtk-3`, `webkit2gtk-4.1` |
 
 The macOS `.app` (libraw + lcms2/libjpeg-turbo/libomp in `Contents/Frameworks`)
 and the Windows `.zip` (libraw + the MinGW runtime DLLs next to the `.exe`) are
-**self-contained** — no `brew`/MSYS2 install needed to run them. The Linux build
-still links its platform libraries dynamically; a self-contained AppImage is
-planned. Building locally with RAW support just needs the platform libraw
-(`brew`/`apt`/MSYS2).
-
-The macOS `.app` is **signed with a Developer ID and notarized by Apple**, so it
-launches without a Gatekeeper warning — no right-click → Open needed.
+**self-contained** — no `brew`/MSYS2 install needed. The Linux binary links its
+platform libraries dynamically, so install the three packages above first.
 
 ### Build from source
 
