@@ -22,19 +22,25 @@ Python.
 
 ### Desktop app
 
-Prebuilt macOS / Windows / Linux binaries are produced by CI — grab them from the
-latest [Actions run](https://github.com/zbruceli/FreeCCR_go/actions) (or a tagged
-release). To build the macOS app locally:
+Download the latest [release](https://github.com/zbruceli/FreeCCR_go/releases):
+
+| Platform | Asset | Notes |
+|---|---|---|
+| macOS (Apple Silicon) | `FreeCCR-go-macos.zip` | Signed + **notarized**, self-contained — unzip and open |
+| Windows x64 | `FreeCCR-go-windows.zip` | Self-contained — unzip, run `FreeCCR-go.exe` (uses the built-in WebView2) |
+| Linux x64 | `FreeCCR-go-linux` | Needs `libraw`, `libgtk-3`, `webkit2gtk-4.1` (e.g. `apt install`) |
+
+Pushing a `v*` tag builds all three on native runners and publishes the release
+(the macOS build is signed + notarized in CI). To build the macOS app locally:
 
 ```bash
 brew install libraw          # RAW support; Xcode CLT provides the webview
 make run-app                 # → bin/FreeCCR-go.app, then launches it
 ```
 
-The app is code-signed with your keychain's *Developer ID Application* identity if
-present (else ad-hoc). For distribution, notarize once:
+`make app` code-signs with your keychain's *Developer ID Application* identity if
+present (else ad-hoc); notarize for distribution with
 `NOTARY_PROFILE=<profile> make app` (after `xcrun notarytool store-credentials`).
-Linux needs `libgtk-3` + `webkit2gtk`; Windows uses the built-in WebView2.
 
 ### CLI
 
