@@ -136,4 +136,14 @@ echo "==> packaging $OUT..."
 rm -f "$OUT"
 appimagetool "$APPDIR" "$OUT"
 
+echo "==> DEBUG packaged contents..."
+rm -rf squashfs-root
+./"$OUT" --appimage-extract >/dev/null 2>&1 || true
+SQ="$PWD/squashfs-root"
+echo "    graphite2 in package: $(ls "$SQ"/usr/lib/libgraphite2* 2>/dev/null || echo MISSING)"
+echo "    harfbuzz  in package: $(ls "$SQ"/usr/lib/libharfbuzz* 2>/dev/null || echo MISSING)"
+echo "    AppRun LD_LIBRARY_PATH lines:"; grep -nE 'LD_LIBRARY_PATH|usr/lib' "$SQ/AppRun" 2>/dev/null | head -6
+echo "    AppRun.wrapped RUNPATH: $(objdump -p "$SQ"/usr/bin/*.wrapped 2>/dev/null | awk '/RUNPATH|RPATH/{print $2}')"
+rm -rf squashfs-root
+
 echo "==> done: $OUT  ($(du -h "$OUT" | cut -f1))"
