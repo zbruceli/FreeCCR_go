@@ -89,24 +89,34 @@ fi
 
 echo "==> completeness pass: bundle excluded-but-needed libs..."
 # linuxdeploy's excludelist omits libs it assumes the host provides (harfbuzz,
-# glib, fontconfig, …), which breaks self-containment. Walk the full closure of
-# everything in the AppDir and copy in any dependency that isn't already bundled,
-# except the genuine host-base libs an AppImage must inherit (glibc, X, GL, the
-# C++/gcc runtime) — bundling those would clash with the host.
-# Bundle into the flat usr/lib that linuxdeploy's AppRun puts on LD_LIBRARY_PATH
-# (a multiarch subdir would not be searched).
+# glib, fontconfig, …), which breaks self-containment. Walk the DT_NEEDED closure
+# of everything in the AppDir and copy in any dependency that isn't already
+# bundled, except the genuine host-base libs an AppImage must inherit (glibc, X,
+# GL, the C++/gcc runtime) — bundling those would clash with the host.
+#
+# We resolve deps by NAME via the host loader cache rather than with ldd: once a
+# lib is bundled, patchelf gives it a bundle-local RUNPATH, so ldd reports its
+# still-unbundled transitive deps as "not found" (no path) and they'd be missed.
+# Bundle into the flat usr/lib that linuxdeploy's AppRun puts on LD_LIBRARY_PATH.
 LIBDIR="$APPDIR/usr/lib"
 mkdir -p "$LIBDIR"
 HOST_RE='^(ld-linux.*|libc|libm|libdl|librt|libpthread|libresolv|libnsl|libutil|libgcc_s|libstdc\+\+|libGL|libGLX|libGLdispatch|libEGL|libOpenGL|libGLU|libX11|libX11-xcb|libxcb.*|libXext|libXrender|libXrandr|libXi|libXcursor|libXfixes|libXdamage|libXcomposite|libXtst|libXau|libXdmcp|libxkbcommon|libxshmfence|libdrm|libgbm|libwayland.*)\.so'
-for _pass in 1 2 3 4 5 6; do
+
+declare -A HOSTLIB
+while IFS= read -r line; do
+  n="${line%% *}"; p="${line##*=> }"
+  [ -n "$n" ] && [ -n "$p" ] && [ -z "${HOSTLIB[$n]:-}" ] && HOSTLIB[$n]="$p"
+done < <(ldconfig -p | sed -nE 's/^[[:space:]]*([^ ]+) .*=> (.*)$/\1 => \2/p')
+
+for _pass in 1 2 3 4 5 6 7 8; do
   added=0
   while IFS= read -r f; do
-    for dep in $(ldd "$f" 2>/dev/null | awk '/=> \// {print $3}'); do
-      base="$(basename "$dep")"
-      echo "$base" | grep -qE "$HOST_RE" && continue
-      if [ ! -e "$LIBDIR/$base" ]; then
-        cp -L "$dep" "$LIBDIR/$base" && { added=$((added + 1)); echo "      + $base"; }
-      fi
+    for n in $(objdump -p "$f" 2>/dev/null | awk '/NEEDED/ {print $2}'); do
+      echo "$n" | grep -qE "$HOST_RE" && continue
+      [ -e "$LIBDIR/$n" ] && continue
+      src="${HOSTLIB[$n]:-}"
+      [ -n "$src" ] && [ -e "$src" ] || continue
+      cp -L "$src" "$LIBDIR/$n" && { added=$((added + 1)); echo "      + $n"; }
     done
   done < <(find "$APPDIR/usr" -type f \( -name '*.so*' -o -perm -u+x \))
   echo "    pass $_pass: +$added libs"
