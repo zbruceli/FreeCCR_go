@@ -93,7 +93,9 @@ echo "==> completeness pass: bundle excluded-but-needed libs..."
 # everything in the AppDir and copy in any dependency that isn't already bundled,
 # except the genuine host-base libs an AppImage must inherit (glibc, X, GL, the
 # C++/gcc runtime) — bundling those would clash with the host.
-LIBDIR="$APPDIR/usr/lib/${MULTIARCH}"
+# Bundle into the flat usr/lib that linuxdeploy's AppRun puts on LD_LIBRARY_PATH
+# (a multiarch subdir would not be searched).
+LIBDIR="$APPDIR/usr/lib"
 mkdir -p "$LIBDIR"
 HOST_RE='^(ld-linux.*|libc|libm|libdl|librt|libpthread|libresolv|libnsl|libutil|libgcc_s|libstdc\+\+|libGL|libGLX|libGLdispatch|libEGL|libOpenGL|libGLU|libX11|libX11-xcb|libxcb.*|libXext|libXrender|libXrandr|libXi|libXcursor|libXfixes|libXdamage|libXcomposite|libXtst|libXau|libXdmcp|libxkbcommon|libxshmfence|libdrm|libgbm|libwayland.*)\.so'
 for _pass in 1 2 3 4; do
