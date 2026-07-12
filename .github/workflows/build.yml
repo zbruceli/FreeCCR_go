@@ -17,18 +17,29 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
-      - name: Install deps (WebKitGTK + libraw)
+      - name: Install deps (WebKitGTK + libraw + AppImage tooling)
         run: |
           sudo apt-get update
-          sudo apt-get install -y libraw-dev libgtk-3-dev libwebkit2gtk-4.1-dev
-      - name: Build
+          sudo apt-get install -y \
+            libraw-dev libgtk-3-dev libwebkit2gtk-4.1-dev \
+            patchelf file imagemagick librsvg2-dev desktop-file-utils xvfb
+      - name: Build AppImage
+        run: bash scripts/build_linux_appimage.sh
+      - name: Smoke-test the AppImage (headless)
         run: |
-          CGO_ENABLED=1 go build -tags "desktop,production,libraw,webkit2_41" \
-            -o FreeCCR-go-linux ./cmd/freeccr-app
+          export APPIMAGE_EXTRACT_AND_RUN=1 LIBGL_ALWAYS_SOFTWARE=1
+          xvfb-run -a ./FreeCCR-go-x86_64.AppImage >/tmp/app.log 2>&1 &
+          APP=$!
+          sleep 10
+          if kill -0 "$APP" 2>/dev/null; then
+            echo "launched and stayed alive under xvfb ✓"; kill "$APP" 2>/dev/null || true
+          else
+            echo "::error::AppImage exited early:"; cat /tmp/app.log; exit 1
+          fi
       - uses: actions/upload-artifact@v4
         with:
           name: FreeCCR-go-linux
-          path: FreeCCR-go-linux
+          path: FreeCCR-go-x86_64.AppImage
 
   macos:
     runs-on: macos-14
@@ -136,9 +147,9 @@ jobs:
       - name: Stage release assets
         run: |
           mkdir -p out
-          cp dist/FreeCCR-go-macos/FreeCCR-go-macos.zip     out/FreeCCR-go-macos.zip
-          cp dist/FreeCCR-go-windows/FreeCCR-go-windows.zip out/FreeCCR-go-windows.zip
-          cp dist/FreeCCR-go-linux/FreeCCR-go-linux         out/FreeCCR-go-linux
+          cp dist/FreeCCR-go-macos/FreeCCR-go-macos.zip       out/FreeCCR-go-macos.zip
+          cp dist/FreeCCR-go-windows/FreeCCR-go-windows.zip   out/FreeCCR-go-windows.zip
+          cp dist/FreeCCR-go-linux/FreeCCR-go-x86_64.AppImage out/FreeCCR-go-linux.AppImage
           ls -l out
       - name: Publish release
         env:
@@ -149,4 +160,4 @@ jobs:
             --notes-file RELEASE_NOTES.md \
             out/FreeCCR-go-macos.zip \
             out/FreeCCR-go-windows.zip \
-            out/FreeCCR-go-linux
+            out/FreeCCR-go-linux.AppImage
