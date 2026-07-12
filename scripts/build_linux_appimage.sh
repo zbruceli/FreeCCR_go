@@ -115,6 +115,7 @@ for _pass in 1 2 3 4 5 6 7 8; do
       echo "$n" | grep -qE "$HOST_RE" && continue
       [ -e "$LIBDIR/$n" ] && continue
       src="${HOSTLIB[$n]:-}"
+      [ -n "$src" ] && [ -e "$src" ] || src="$(find /usr/lib /lib -name "$n" 2>/dev/null | head -1)"
       [ -n "$src" ] && [ -e "$src" ] || continue
       cp -L "$src" "$LIBDIR/$n" && { added=$((added + 1)); echo "      + $n"; }
     done
@@ -122,6 +123,14 @@ for _pass in 1 2 3 4 5 6 7 8; do
   echo "    pass $_pass: +$added libs"
   [ "$added" -eq 0 ] && break
 done
+
+echo "==> DEBUG graphite2: needed-by / cache / present..."
+for f in $(find "$APPDIR/usr" -type f \( -name '*.so*' -o -perm -u+x \)); do
+  objdump -p "$f" 2>/dev/null | awk '/NEEDED/ {print $2}' | grep -q '^libgraphite2' && echo "    NEEDED-by: ${f#$APPDIR/}"
+done
+echo "    in ldconfig cache: ${HOSTLIB[libgraphite2.so.3]:-<none>}"
+echo "    on host: $(find /usr/lib /lib -name 'libgraphite2.so*' 2>/dev/null | head -1 || echo none)"
+echo "    bundled: $(ls "$LIBDIR"/libgraphite2.so* 2>/dev/null || echo none)"
 
 echo "==> packaging $OUT..."
 rm -f "$OUT"
