@@ -98,14 +98,14 @@ echo "==> completeness pass: bundle excluded-but-needed libs..."
 LIBDIR="$APPDIR/usr/lib"
 mkdir -p "$LIBDIR"
 HOST_RE='^(ld-linux.*|libc|libm|libdl|librt|libpthread|libresolv|libnsl|libutil|libgcc_s|libstdc\+\+|libGL|libGLX|libGLdispatch|libEGL|libOpenGL|libGLU|libX11|libX11-xcb|libxcb.*|libXext|libXrender|libXrandr|libXi|libXcursor|libXfixes|libXdamage|libXcomposite|libXtst|libXau|libXdmcp|libxkbcommon|libxshmfence|libdrm|libgbm|libwayland.*)\.so'
-for _pass in 1 2 3 4; do
+for _pass in 1 2 3 4 5 6; do
   added=0
   while IFS= read -r f; do
     for dep in $(ldd "$f" 2>/dev/null | awk '/=> \// {print $3}'); do
       base="$(basename "$dep")"
       echo "$base" | grep -qE "$HOST_RE" && continue
-      if [ ! -e "$LIBDIR/$base" ] && [ ! -e "$APPDIR/usr/lib/$base" ]; then
-        cp -L "$dep" "$LIBDIR/$base" && added=$((added + 1))
+      if [ ! -e "$LIBDIR/$base" ]; then
+        cp -L "$dep" "$LIBDIR/$base" && { added=$((added + 1)); echo "      + $base"; }
       fi
     done
   done < <(find "$APPDIR/usr" -type f \( -name '*.so*' -o -perm -u+x \))
