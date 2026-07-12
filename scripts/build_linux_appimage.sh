@@ -124,26 +124,18 @@ for _pass in 1 2 3 4 5 6 7 8; do
   [ "$added" -eq 0 ] && break
 done
 
-echo "==> DEBUG graphite2: needed-by / cache / present..."
-for f in $(find "$APPDIR/usr" -type f \( -name '*.so*' -o -perm -u+x \)); do
-  objdump -p "$f" 2>/dev/null | awk '/NEEDED/ {print $2}' | grep -q '^libgraphite2' && echo "    NEEDED-by: ${f#$APPDIR/}"
-done
-echo "    in ldconfig cache: ${HOSTLIB[libgraphite2.so.3]:-<none>}"
-echo "    on host: $(find /usr/lib /lib -name 'libgraphite2.so*' 2>/dev/null | head -1 || echo none)"
-echo "    bundled: $(ls "$LIBDIR"/libgraphite2.so* 2>/dev/null || echo none)"
+# The libs we just copied have no RUNPATH, so their own inter-dependencies (e.g.
+# harfbuzz -> graphite2) can't be located at load time. Give each an $ORIGIN
+# RUNPATH like the libs linuxdeploy bundles, and add an LD_LIBRARY_PATH hook as a
+# belt-and-suspenders fallback (also covers the WebKit helper subprocesses).
+find "$LIBDIR" -maxdepth 1 -type f -name '*.so*' \
+  -exec patchelf --set-rpath '$ORIGIN' {} \; 2>/dev/null || true
+cat > "$APPDIR/apprun-hooks/libpath.sh" <<'HOOK'
+export LD_LIBRARY_PATH="${APPDIR}/usr/lib:${LD_LIBRARY_PATH}"
+HOOK
 
 echo "==> packaging $OUT..."
 rm -f "$OUT"
 appimagetool "$APPDIR" "$OUT"
-
-echo "==> DEBUG packaged contents..."
-rm -rf squashfs-root
-./"$OUT" --appimage-extract >/dev/null 2>&1 || true
-SQ="$PWD/squashfs-root"
-echo "    graphite2 in package: $(ls "$SQ"/usr/lib/libgraphite2* 2>/dev/null || echo MISSING)"
-echo "    harfbuzz  in package: $(ls "$SQ"/usr/lib/libharfbuzz* 2>/dev/null || echo MISSING)"
-echo "    AppRun LD_LIBRARY_PATH lines:"; grep -nE 'LD_LIBRARY_PATH|usr/lib' "$SQ/AppRun" 2>/dev/null | head -6
-echo "    AppRun.wrapped RUNPATH: $(objdump -p "$SQ"/usr/bin/*.wrapped 2>/dev/null | awk '/RUNPATH|RPATH/{print $2}')"
-rm -rf squashfs-root
 
 echo "==> done: $OUT  ($(du -h "$OUT" | cut -f1))"
