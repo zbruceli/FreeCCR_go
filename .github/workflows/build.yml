@@ -17,53 +17,18 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
-      - name: Install deps (WebKitGTK + libraw + AppImage tooling)
+      - name: Install deps (WebKitGTK + libraw)
         run: |
           sudo apt-get update
-          sudo apt-get install -y \
-            libraw-dev libgtk-3-dev libwebkit2gtk-4.1-dev \
-            patchelf file imagemagick librsvg2-dev desktop-file-utils xvfb
-      - name: Build AppImage
-        run: bash scripts/build_linux_appimage.sh
-      - name: Smoke-test the AppImage (headless)
+          sudo apt-get install -y libraw-dev libgtk-3-dev libwebkit2gtk-4.1-dev
+      - name: Build
         run: |
-          export APPIMAGE_EXTRACT_AND_RUN=1 LIBGL_ALWAYS_SOFTWARE=1
-          xvfb-run -a ./FreeCCR-go-x86_64.AppImage >/tmp/app.log 2>&1 &
-          APP=$!
-          sleep 10
-          if kill -0 "$APP" 2>/dev/null; then
-            echo "launched and stayed alive under xvfb ✓"; kill "$APP" 2>/dev/null || true
-          else
-            echo "::error::AppImage exited early:"; cat /tmp/app.log; exit 1
-          fi
-      - name: Clean-room test (container with no webkit/gtk/libraw)
-        # Proves self-containment: a base image with only the host libs an AppImage
-        # is allowed to assume (glibc, X, GL) — deliberately NO webkit2gtk, gtk3,
-        # or libraw. If it launches here, those are genuinely bundled.
-        run: |
-          docker run --rm -v "$PWD:/w" -w /w ubuntu:24.04 bash -c '
-            set -e
-            apt-get update -qq
-            # Only the host-base libs an AppImage may assume (the graphics-driver
-            # + X stack that build_linux_appimage.sh deliberately does NOT bundle).
-            # No gtk3 / webkit2gtk / libraw / glib / fontconfig — those must be
-            # bundled, or the app will not launch here.
-            DEBIAN_FRONTEND=noninteractive apt-get install -y -qq xvfb ca-certificates \
-              libgl1 libglx0 libglvnd0 libegl1 libgles2 libgbm1 libdrm2 \
-              libx11-6 libx11-xcb1 libxcb1 libxext6 libxrender1 libxrandr2 libxi6 \
-              libxcursor1 libxfixes3 libxdamage1 libxcomposite1 libxtst6 libxau6 \
-              libxdmcp6 libxkbcommon0 libxshmfence1 \
-              libwayland-client0 libwayland-egl1 libwayland-cursor0 >/dev/null
-            export APPIMAGE_EXTRACT_AND_RUN=1 LIBGL_ALWAYS_SOFTWARE=1
-            xvfb-run -a ./FreeCCR-go-x86_64.AppImage >/tmp/c.log 2>&1 &
-            P=$!; sleep 12
-            if kill -0 $P 2>/dev/null; then echo "clean-room launch ✓"; kill $P 2>/dev/null || true;
-            else echo "::error::failed in clean room:"; cat /tmp/c.log; exit 1; fi
-          '
+          CGO_ENABLED=1 go build -tags "desktop,production,libraw,webkit2_41" \
+            -o FreeCCR-go-linux ./cmd/freeccr-app
       - uses: actions/upload-artifact@v4
         with:
           name: FreeCCR-go-linux
-          path: FreeCCR-go-x86_64.AppImage
+          path: FreeCCR-go-linux
 
   macos:
     runs-on: macos-14
@@ -171,9 +136,9 @@ jobs:
       - name: Stage release assets
         run: |
           mkdir -p out
-          cp dist/FreeCCR-go-macos/FreeCCR-go-macos.zip       out/FreeCCR-go-macos.zip
-          cp dist/FreeCCR-go-windows/FreeCCR-go-windows.zip   out/FreeCCR-go-windows.zip
-          cp dist/FreeCCR-go-linux/FreeCCR-go-x86_64.AppImage out/FreeCCR-go-linux.AppImage
+          cp dist/FreeCCR-go-macos/FreeCCR-go-macos.zip     out/FreeCCR-go-macos.zip
+          cp dist/FreeCCR-go-windows/FreeCCR-go-windows.zip out/FreeCCR-go-windows.zip
+          cp dist/FreeCCR-go-linux/FreeCCR-go-linux         out/FreeCCR-go-linux
           ls -l out
       - name: Publish release
         env:
@@ -184,4 +149,4 @@ jobs:
             --notes-file RELEASE_NOTES.md \
             out/FreeCCR-go-macos.zip \
             out/FreeCCR-go-windows.zip \
-            out/FreeCCR-go-linux.AppImage
+            out/FreeCCR-go-linux
