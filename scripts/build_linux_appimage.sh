@@ -81,8 +81,13 @@ WK="${APPDIR}/usr/lib/MULTIARCH_PLACEHOLDER/webkit2gtk-4.1"
 [ -d "$WK" ] && export WEBKIT_EXEC_PATH="$WK"
 [ -d "$WK/injected-bundle" ] && export WEBKIT_INJECTED_BUNDLE_PATH="$WK/injected-bundle"
 export WEBKIT_DISABLE_COMPOSITING_MODE=1
+# Bundled fontconfig has no default config; point it at the bundled copy.
+[ -d "${APPDIR}/etc/fonts" ] && export FONTCONFIG_PATH="${APPDIR}/etc/fonts"
+echo "[apprun-hook] webkit hook ran: WEBKIT_EXEC_PATH=$WEBKIT_EXEC_PATH FONTCONFIG_PATH=$FONTCONFIG_PATH" >&2
 HOOK
   sed -i "s/MULTIARCH_PLACEHOLDER/${MULTIARCH}/" "$APPDIR/apprun-hooks/webkit.sh"
+  # Bundle fontconfig's config so the bundled libfontconfig can find fonts.conf.
+  [ -d /etc/fonts ] && mkdir -p "$APPDIR/etc" && cp -a /etc/fonts "$APPDIR/etc/fonts"
 else
   echo "    WARNING: $WK_SRC not found; webview may need a system webkit2gtk" >&2
 fi
